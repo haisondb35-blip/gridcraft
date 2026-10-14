@@ -188,6 +188,7 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                     "{userName?, defaultFont?, defaultFontSize?: 1–409, sheetsInNewWorkbook?: 1–255, enterDirection?: down|right|up|left|none} → all of them",
                 ),
                 ("view.interfaceScale", "Interface Size", "{percent: 75–200 | \"auto\"} (100 = auto; clamped)"),
+                ("ui.claudePane", "Claude", "{on?: bool} (toggles without it) → {on}"),
                 ("ui.dialog", "Open Dialog", ""),
                 ("ui.backstage", "File (Backstage view)", "{page?: home|new|open|info|saveAs|print|export|options|close}"),
                 (
@@ -394,7 +395,20 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
 }
 
 pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
+    // The Claude pane's own channel, then the `--control` one.
+    if let Some(rx) = app.assistant.control_rx.take() {
+        drain(app, ctx, &rx);
+        app.assistant.control_rx = Some(rx);
+    }
     let Some(rx) = app.control_rx.take() else { return };
+    drain(app, ctx, &rx);
+    app.control_rx = Some(rx);
+    if !app.synthetic.is_empty() {
+        ctx.request_repaint();
+    }
+}
+
+fn drain(app: &mut SheetApp, ctx: &egui::Context, rx: &std::sync::mpsc::Receiver<ControlRequest>) {
     while let Ok(req) = rx.try_recv() {
         let outcome = handle(app, ctx, &req.method, &req.params);
         match outcome {
@@ -409,7 +423,6 @@ pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
             }
         }
     }
-    app.control_rx = Some(rx);
     if !app.synthetic.is_empty() {
         ctx.request_repaint();
     }

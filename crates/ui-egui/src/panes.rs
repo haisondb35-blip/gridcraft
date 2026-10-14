@@ -27,6 +27,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 "watch" => "Watch Window",
                 "selection" => "Selection",
                 "formatChart" => "Format Chart Area",
+                "claude" => "Claude",
                 _ => "",
             };
             ui.label(egui::RichText::new(title).font(theme::ui_bold(15.0)));
@@ -40,6 +41,11 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             });
         });
         ui.separator();
+        // The conversation scrolls by itself above its input box.
+        if pane == "claude" {
+            crate::assistant::pane(app, ui);
+            return;
+        }
         egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
             "comments" => comments(app, ui),
             "watch" => watch(app, ui),

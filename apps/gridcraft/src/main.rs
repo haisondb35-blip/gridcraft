@@ -351,6 +351,8 @@ fn main() -> eframe::Result<()> {
                     return Err("the app was already created".into());
                 };
                 SheetApp::setup_context_for_language(&cc.egui_ctx, app.ui.dark, app.ui.language);
+                // The Claude pane opens a channel of its own when first asked: a free port, its token.
+                app.assistant.starter = Some(Box::new(|ctx, token| control_server::start_with(0, ctx.clone(), Some(token.to_string())).ok()));
                 if let Some(port) = control_port {
                     match control_server::start(port, cc.egui_ctx.clone()) {
                         Ok(rx) => app.control_rx = Some(rx),

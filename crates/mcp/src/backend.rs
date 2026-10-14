@@ -27,12 +27,16 @@ pub struct Remote {
     addr: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
+    /// The channel's token, sent with every request (`GRIDCRAFT_CONTROL_TOKEN`; the Claude
+    /// pane's channel refuses requests without it).
+    token: Option<String>,
 }
 
 impl Remote {
     /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        let token = std::env::var("GRIDCRAFT_CONTROL_TOKEN").ok().filter(|t| !t.is_empty());
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, token };
         r.reconnect()?;
         Ok(r)
     }
@@ -83,7 +87,11 @@ impl Backend for Remote {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
-        let line = json!({"id": id, "method": method, "params": params}).to_string();
+        let mut msg = json!({"id": id, "method": method, "params": params});
+        if let (Some(t), Some(o)) = (&self.token, msg.as_object_mut()) {
+            o.insert("token".into(), Value::String(t.clone()));
+        }
+        let line = msg.to_string();
         // One retry with a fresh connection (the app may have restarted).
         let reply = match self.roundtrip(&line) {
             Ok(r) => r,

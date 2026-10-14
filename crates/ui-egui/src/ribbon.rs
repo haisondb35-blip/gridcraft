@@ -1059,6 +1059,12 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
             ],
         );
     });
+    sep(ui);
+    // Claude: a task pane where Claude works on the open workbook, as Copilot does in Excel.
+    let open = app.grid.pane.as_deref() == Some("claude");
+    if crate::widgets::big_button(ui, Icon::Comment, "Claude", if open { "Hide Claude" } else { "Ask Claude" }, false).clicked() {
+        app.run_or_alert("ui.claudePane", json!({}));
+    }
 }
 
 fn font_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {

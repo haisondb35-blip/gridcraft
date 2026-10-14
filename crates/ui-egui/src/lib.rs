@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod assistant;
 pub mod backstage;
 mod border_preview;
 mod cell_pictures;
@@ -228,6 +229,8 @@ pub struct SheetApp {
     /// Synthetic input from agents, one batch per frame (drags need several frames).
     pub synthetic: std::collections::VecDeque<Vec<egui::Event>>,
     pub control_rx: Option<std::sync::mpsc::Receiver<ControlRequest>>,
+    /// The Claude pane's conversation and the Claude Code it runs (the task pane `claude`).
+    pub assistant: assistant::Assistant,
     pub grid: grid::GridState,
     pub perf: Perf,
     pub fonts_ready: bool,
@@ -286,6 +289,7 @@ impl SheetApp {
             print_feedback_seen: None,
             synthetic: Default::default(),
             control_rx: None,
+            assistant: assistant::Assistant::default(),
             grid: grid::GridState {
                 last_border: "bottom".into(),
                 last_fill: "#FFFF00".into(),
@@ -612,6 +616,17 @@ impl SheetApp {
             "options.autoComplete" => {
                 self.ui.autocomplete = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.autocomplete);
                 Ok(json!({"on": self.ui.autocomplete}))
+            }
+            "ui.claudePane" => {
+                // Home › Claude: show or hide the pane (`on`; toggles without it).
+                let open = self.grid.pane.as_deref() == Some("claude");
+                let on = p.get("on").and_then(Json::as_bool).unwrap_or(!open);
+                if on {
+                    self.grid.pane = Some("claude".into());
+                } else if open {
+                    self.grid.pane = None;
+                }
+                Ok(json!({"on": on}))
             }
             "options.set" => Ok(match self.set_options(p) {
                 Ok(v) => v,
