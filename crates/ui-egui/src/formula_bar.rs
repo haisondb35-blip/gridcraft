@@ -189,7 +189,8 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         if !ed.autocomplete.is_empty() && tab {
             ed.accept_autocomplete();
         } else if enter {
-            action = Some((if shift { -1 } else { 1 }, 0, false, false));
+            let (dr, dc) = app.enter_step(shift);
+            action = Some((dr, dc, false, false));
         } else if tab {
             action = Some((0, if shift { -1 } else { 1 }, false, false));
         }

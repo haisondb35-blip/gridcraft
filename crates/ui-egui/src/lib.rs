@@ -613,6 +613,10 @@ impl SheetApp {
                 self.ui.autocomplete = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.autocomplete);
                 Ok(json!({"on": self.ui.autocomplete}))
             }
+            "options.set" => Ok(match self.set_options(p) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            }),
             "view.interfaceScale" => {
                 // `{"percent": 125}` or `{"percent": "auto"}`; out-of-range values are clamped.
                 let percent = match p.get("percent") {
@@ -962,6 +966,59 @@ impl SheetApp {
     }
 
     /// Enter/Tab move inside a multi-cell selection, otherwise to the next cell.
+    /// Where Enter moves the selection (File › Options › Advanced): down, right, up, left or
+    /// nowhere; Shift+Enter goes the other way.
+    pub fn enter_step(&self, shift: bool) -> (i64, i64) {
+        let (dr, dc) = match self.session.prefs.enter_direction.as_str() {
+            "right" => (0, 1),
+            "up" => (-1, 0),
+            "left" => (0, -1),
+            "none" => (0, 0),
+            _ => (1, 0),
+        };
+        if shift { (-dr, -dc) } else { (dr, dc) }
+    }
+
+    /// `options.set`: the application options File › Options shows (each optional) → all of them.
+    pub fn set_options(&mut self, p: &Json) -> Result<Json, String> {
+        let prefs = &mut self.session.prefs;
+        if let Some(v) = p.get("userName") {
+            let name =
+                v.as_str().map(str::trim).filter(|n| !n.is_empty() && n.chars().count() <= 255).ok_or("userName must be 1 to 255 characters")?;
+            prefs.user_name = name.to_string();
+        }
+        if let Some(v) = p.get("defaultFont") {
+            let font = v
+                .as_str()
+                .map(str::trim)
+                .filter(|n| !n.is_empty() && n.chars().count() <= 31)
+                .ok_or("defaultFont must be a font name of 1 to 31 characters")?;
+            prefs.default_font = font.to_string();
+        }
+        if let Some(v) = p.get("defaultFontSize") {
+            let size = v.as_f64().filter(|s| (1.0..=409.0).contains(s)).ok_or("defaultFontSize must be 1 to 409")?;
+            prefs.default_font_size = size as f32;
+        }
+        if let Some(v) = p.get("sheetsInNewWorkbook") {
+            let n = v.as_u64().filter(|n| (1..=255).contains(n)).ok_or("sheetsInNewWorkbook must be 1 to 255")?;
+            prefs.sheets_in_new_workbook = n as usize;
+        }
+        if let Some(v) = p.get("enterDirection") {
+            let d = v
+                .as_str()
+                .filter(|d| matches!(*d, "down" | "right" | "up" | "left" | "none"))
+                .ok_or("enterDirection must be down, right, up, left or none")?;
+            prefs.enter_direction = d.to_string();
+        }
+        Ok(json!({
+            "userName": prefs.user_name,
+            "defaultFont": prefs.default_font,
+            "defaultFontSize": prefs.default_font_size,
+            "sheetsInNewWorkbook": prefs.sheets_in_new_workbook,
+            "enterDirection": prefs.enter_direction,
+        }))
+    }
+
     pub fn move_after_enter(&mut self, dr: i64, dc: i64) {
         let multi = self.session.active().is_some_and(|d| !d.selection.is_single_cell());
         if multi {

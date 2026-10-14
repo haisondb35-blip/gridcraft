@@ -89,13 +89,14 @@ impl Page {
 }
 
 /// Document properties shown on the Info page: (`file.properties` key, label).
-const PROPERTIES: [(&str, &str); 6] = [
+const PROPERTIES: [(&str, &str); 7] = [
     ("title", "Title"),
     ("subject", "Subject"),
     ("author", "Author"),
     ("company", "Company"),
     ("keywords", "Keywords"),
     ("description", "Description"),
+    ("category", "Categories"),
 ];
 
 /// The open Backstage view.
@@ -103,7 +104,13 @@ const PROPERTIES: [(&str, &str); 6] = [
 pub struct Backstage {
     pub page: Page,
     /// Info: property drafts while a field is being edited (committed when it loses focus).
-    props: [String; 6],
+    props: [String; 7],
+    /// Info: Show All Properties is open.
+    all_props: bool,
+    /// Options: the pane shown (an id from [`OPTION_PANES`]).
+    pub options_pane: &'static str,
+    /// Options › General: the user name while it is edited.
+    user_name: String,
     /// Print: the whole workbook rather than the active sheet.
     pub print_all: bool,
     /// Print: fit each sheet on one page.
@@ -128,6 +135,9 @@ impl Backstage {
         Backstage {
             page,
             props: Default::default(),
+            all_props: false,
+            options_pane: "general",
+            user_name: String::new(),
             print_all: false,
             fit_to_page: false,
             preview_page: 0,
@@ -210,7 +220,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
                     Page::Print => print(app, ui, &mut bs, &mut out),
                     Page::Export => export(app, ui, &mut out),
-                    Page::Options => options(app, ui),
+                    Page::Options => options(app, ui, &mut bs),
                 }
             });
         });
@@ -581,6 +591,38 @@ pub fn protect_workbook(app: &mut SheetApp) {
     }
 }
 
+/// One of the Info page's blocks: a square button on the left, a title and lines beside it.
+fn info_block(ui: &mut Ui, icon: Icon, button: &str, title: &str, lines: &[String]) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let mut clicked = None;
+    ui.horizontal(|ui| {
+        clicked = Some(square_button(ui, icon, button));
+        ui.add_space(12.0);
+        ui.vertical(|ui| {
+            ui.add_space(10.0);
+            ui.label(RichText::new(title).font(theme::ui_bold(14.5)).color(t.text));
+            for l in lines {
+                dim(ui, l);
+            }
+        });
+    });
+    ui.add_space(16.0);
+    clicked.unwrap_or_else(|| ui.label(""))
+}
+
+/// A W3CDTF date from the core properties (`2022-05-27T04:57:00Z`) for display, in UTC as stored.
+fn shown_date(w3c: &str) -> String {
+    let s = w3c.trim();
+    if s.len() >= 16 && s.is_char_boundary(10) && s.is_char_boundary(16) {
+        let utc = if s.ends_with('Z') { " UTC" } else { "" };
+        format!("{} {}{utc}", &s[..10], &s[11..16])
+    } else {
+        s.to_string()
+    }
+}
+
+/// File › Info, as Excel lays it out: what can be done with the workbook on the left (protect,
+/// check, manage), its properties, dates, people and folder on the right.
 fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
     let lang = app.ui.language;
@@ -590,66 +632,172 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     };
     let title = d.display_title();
     let path = d.path.clone();
-    let sheets = d.wb.sheets.len();
-    let protected = d.wb.protected_structure;
-    let current: Vec<String> = {
-        let pr = &d.wb.props;
-        vec![pr.title.clone(), pr.subject.clone(), pr.author.clone(), pr.company.clone(), pr.keywords.clone(), pr.description.clone()]
-    };
-    ui.horizontal(|ui| {
-        icons::paint(ui.painter(), Rect::from_min_size(ui.cursor().min, vec2(28.0, 28.0)), Icon::Book, t.text);
-        ui.add_space(38.0);
-        ui.vertical(|ui| {
-            ui.label(RichText::new(&title).font(theme::ui_bold(16.0)).color(t.text));
-            match &path {
-                Some(p) => dim(ui, p),
-                None => dim(ui, lang.tr("Not saved yet")),
-            }
-        });
-    });
-    ui.add_space(18.0);
-    ui.horizontal(|ui| {
-        if square_button(ui, Icon::Lock, lang.tr("Protect Workbook")).clicked() {
-            protect_workbook(app);
+    let dirty = d.is_dirty();
+    let wb = &d.wb;
+    let protected = wb.protected_structure;
+    let sheet_protected = wb.active().is_some_and(|s| s.is_protected());
+    let props = wb.props.clone();
+    let current: Vec<String> = vec![
+        props.title.clone(),
+        props.subject.clone(),
+        props.author.clone(),
+        props.company.clone(),
+        props.keywords.clone(),
+        props.description.clone(),
+        props.category.clone(),
+    ];
+    // What Inspect would point out before the file is shared.
+    let mut contains = Vec::new();
+    if !props.author.is_empty() || !props.last_modified_by.is_empty() || !props.company.is_empty() {
+        contains.push(lang.tr("Document properties and author's name").to_string());
+    }
+    let comments: usize = wb.sheets.iter().map(|s| s.comments.len()).sum();
+    if comments > 0 {
+        contains.push(format!("{} ({comments})", lang.tr("Comments and notes")));
+    }
+    let hidden = wb.sheets.iter().filter(|s| s.visibility != gridcraft_engine::model::Visibility::Visible).count();
+    if hidden > 0 {
+        contains.push(format!("{} ({hidden})", lang.tr("Hidden worksheets")));
+    }
+    if wb.vba_project.is_some() {
+        contains.push(lang.tr("Macros").to_string());
+    }
+    let size = path.as_deref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
+    let folder = path.as_deref().and_then(|p| std::path::Path::new(p).parent().map(|f| f.to_string_lossy().into_owned()));
+
+    // The workbook's name and folder across the page.
+    ui.label(RichText::new(&title).font(theme::ui_font(22.0)).color(t.accent));
+    dim(ui, path.as_deref().unwrap_or(lang.tr("Not saved yet")));
+    ui.add_space(14.0);
+
+    let mut open_dialog: Option<&str> = None;
+    let mut toggle_structure = false;
+    ui.columns(2, |cols| {
+        let [left, right] = cols else { return };
+        // ---- Left: actions.
+        let protect_text = if protected {
+            lang.tr("The workbook's structure is locked: sheets can't be added, moved, renamed or deleted.").to_string()
+        } else {
+            lang.tr("Control what types of changes people can make to this workbook.").to_string()
+        };
+        let mut protect_lines = vec![protect_text];
+        if sheet_protected {
+            protect_lines.push(lang.tr("The current sheet is protected.").to_string());
         }
-        ui.add_space(12.0);
-        ui.vertical(|ui| {
-            ui.add_space(14.0);
-            ui.label(RichText::new(lang.tr("Protect Workbook")).font(theme::ui_bold(13.5)).color(t.text));
-            let text = if protected {
-                "Sheet structure is locked: sheets can't be added, moved, renamed or deleted."
-            } else {
-                "Lock the sheet structure so sheets can't be added, moved, renamed or deleted."
-            };
-            dim(ui, lang.tr(text));
-        });
-    });
-    ui.add_space(22.0);
-    section(ui, lang, "Properties");
-    egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
-        ui.label(RichText::new(lang.tr("Location")).color(t.text_dim));
-        ui.label(path.as_deref().unwrap_or(lang.tr("Not saved yet")));
-        ui.end_row();
-        ui.label(RichText::new(lang.tr("Sheets")).color(t.text_dim));
-        ui.label(sheets.to_string());
-        ui.end_row();
-        for (i, (key, label)) in PROPERTIES.iter().enumerate() {
-            let (Some(draft), Some(saved)) = (bs.props.get_mut(i), current.get(i)) else { continue };
-            ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
-            let id = ui.make_persistent_id(("backstage_prop", *key));
-            // Show the workbook's value unless the field is being edited (undo, another window).
-            if !ui.ctx().memory(|m| m.has_focus(id)) {
-                draft.clone_from(saved);
+        let r = info_block(left, Icon::Lock, lang.tr("Protect Workbook"), lang.tr("Protect Workbook"), &protect_lines);
+        egui::Popup::menu(&r).show(|ui| {
+            let sheet_label = if sheet_protected { lang.tr("Unprotect Current Sheet…") } else { lang.tr("Protect Current Sheet…") };
+            if ui.button(sheet_label).clicked() {
+                open_dialog = Some(if sheet_protected { "unprotectSheet" } else { "protectSheet" });
             }
-            let resp = ui.add(egui::TextEdit::singleline(draft).id(id).desired_width(360.0));
-            if resp.lost_focus() && draft != saved {
-                let mut params = serde_json::Map::new();
-                params.insert((*key).to_string(), json!(draft.clone()));
-                app.run_or_alert("file.properties", Json::Object(params));
+            let book_label = if protected { lang.tr("Unprotect Workbook Structure…") } else { lang.tr("Protect Workbook Structure…") };
+            if ui.button(book_label).clicked() {
+                toggle_structure = true;
+            }
+        });
+        let mut inspect_lines = vec![lang.tr("Before publishing this file, be aware that it contains:").to_string()];
+        if contains.is_empty() {
+            inspect_lines = vec![lang.tr("Nothing that needs your attention before sharing it.").to_string()];
+        } else {
+            inspect_lines.extend(contains.iter().map(|c| format!("▪  {c}")));
+        }
+        let r = info_block(left, Icon::Search, lang.tr("Check for Issues"), lang.tr("Inspect Workbook"), &inspect_lines);
+        egui::Popup::menu(&r).show(|ui| {
+            if ui.button(lang.tr("Check Accessibility")).clicked() {
+                open_dialog = Some("accessibility");
+            }
+            if ui.button(lang.tr("Workbook Statistics")).clicked() {
+                open_dialog = Some("statistics");
+            }
+        });
+        let manage = if dirty { lang.tr("There are unsaved changes.") } else { lang.tr("There are no unsaved changes.") };
+        let r = info_block(left, Icon::Save, lang.tr("Manage Workbook"), lang.tr("Manage Workbook"), &[manage.to_string()]);
+        if r.clicked() && dirty {
+            app.run_or_alert("file.save", json!({}));
+        }
+
+        // ---- Right: properties.
+        let ui = right;
+        section(ui, lang, "Properties");
+        egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+            ui.label(RichText::new(lang.tr("Size")).color(t.text_dim));
+            ui.label(size.map_or_else(
+                || lang.tr("Not saved yet").to_string(),
+                |b| if b < 1024 { format!("{b} B") } else { format!("{:.1}KB", b as f64 / 1024.0) },
+            ));
+            ui.end_row();
+            // Title, Tags and Categories always; the rest under Show All Properties.
+            let shown: &[usize] = if bs.all_props { &[0, 4, 6, 1, 3, 5] } else { &[0, 4, 6] };
+            for &i in shown {
+                let (Some((key, label)), Some(draft), Some(saved)) = (PROPERTIES.get(i), bs.props.get_mut(i), current.get(i)) else { continue };
+                ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
+                let id = ui.make_persistent_id(("backstage_prop", *key));
+                // Show the workbook's value unless the field is being edited (undo, another window).
+                if !ui.ctx().memory(|m| m.has_focus(id)) {
+                    draft.clone_from(saved);
+                }
+                let hint = format!("{} {}", lang.tr("Add a"), lang.tr(label).to_lowercase());
+                let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(hint).desired_width(260.0));
+                if resp.lost_focus() && draft != saved {
+                    let mut params = serde_json::Map::new();
+                    params.insert((*key).to_string(), json!(draft.clone()));
+                    app.run_or_alert("file.properties", Json::Object(params));
+                }
+                ui.end_row();
+            }
+        });
+        ui.add_space(14.0);
+        section(ui, lang, "Related Dates");
+        egui::Grid::new("backstage_dates").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+            for (label, value) in [("Last Modified", &props.modified), ("Created", &props.created), ("Last Printed", &props.last_printed)] {
+                ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
+                ui.label(shown_date(value));
+                ui.end_row();
+            }
+        });
+        ui.add_space(14.0);
+        section(ui, lang, "Related People");
+        egui::Grid::new("backstage_people").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+            let i = 2; // author
+            ui.label(RichText::new(lang.tr("Author")).color(t.text_dim));
+            if let (Some(draft), Some(saved)) = (bs.props.get_mut(i), current.get(i)) {
+                let id = ui.make_persistent_id(("backstage_prop", "author"));
+                if !ui.ctx().memory(|m| m.has_focus(id)) {
+                    draft.clone_from(saved);
+                }
+                let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(lang.tr("Add an author")).desired_width(260.0));
+                if resp.lost_focus() && draft != saved {
+                    app.run_or_alert("file.properties", json!({"author": draft.clone()}));
+                }
             }
             ui.end_row();
+            ui.label(RichText::new(lang.tr("Last Modified By")).color(t.text_dim));
+            ui.label(&props.last_modified_by);
+            ui.end_row();
+        });
+        ui.add_space(14.0);
+        section(ui, lang, "Related Documents");
+        if let Some(f) = &folder {
+            if ui.link(lang.tr("Open File Location")).on_hover_text(f).clicked()
+                && let Some(open) = &app.services.open_url
+            {
+                open(f);
+            }
+        } else {
+            dim(ui, lang.tr("Not saved yet"));
+        }
+        ui.add_space(8.0);
+        let label = if bs.all_props { lang.tr("Show Fewer Properties") } else { lang.tr("Show All Properties") };
+        if ui.link(label).clicked() {
+            bs.all_props = !bs.all_props;
         }
     });
+    if let Some(id) = open_dialog {
+        app.open_dialog(id, json!({}));
+    }
+    if toggle_structure {
+        protect_workbook(app);
+    }
 }
 
 fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
@@ -927,10 +1075,75 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
     }
 }
 
-fn options(app: &mut SheetApp, ui: &mut Ui) {
+/// File › Options panes, in order (Excel's list, with the ones GridCraft has settings for).
+pub const OPTION_PANES: [(&str, &str); 7] = [
+    ("general", "General"),
+    ("formulas", "Formulas"),
+    ("proofing", "Proofing"),
+    ("save", "Save"),
+    ("language", "Language"),
+    ("advanced", "Advanced"),
+    ("agents", "Agents"),
+];
+
+/// File › Options: the panes on the left, the chosen pane's settings on the right, as in Excel
+/// and WordCraft. Every setting goes through a command (`view.*`, `options.*`, `formulas.*`).
+fn options(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
+    let t = Tokens::get(ui.ctx());
     let lang = app.ui.language;
-    section(ui, lang, "Options|General");
-    egui::Grid::new("backstage_options_general").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
+    let current = OPTION_PANES.iter().find(|p| p.0 == bs.options_pane).map_or("general", |p| p.0);
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(180.0);
+            for (id, label) in OPTION_PANES {
+                let text = lang.tr(label);
+                let active = current == id;
+                let (r, resp) = ui.allocate_exact_size(vec2(180.0, 32.0), Sense::click());
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, text));
+                if active {
+                    ui.painter().rect_filled(r, 4.0, t.hover);
+                    ui.painter().rect_filled(egui::Rect::from_min_size(r.min, vec2(3.0, r.height())), 1.5, t.accent);
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(r, 4.0, t.hover);
+                }
+                let font = if active { theme::ui_bold(14.0) } else { theme::ui_font(14.0) };
+                ui.painter().text(egui::pos2(r.min.x + 14.0, r.center().y), egui::Align2::LEFT_CENTER, text, font, t.text);
+                if resp.clicked() {
+                    bs.options_pane = id;
+                }
+            }
+        });
+        ui.add_space(12.0);
+        let (line, _) = ui.allocate_exact_size(vec2(1.0, 460.0), Sense::hover());
+        ui.painter().rect_filled(line, 0.0, t.separator);
+        ui.add_space(22.0);
+        ui.vertical(|ui| {
+            ui.set_max_width(680.0);
+            match current {
+                "formulas" => options_formulas(app, ui),
+                "proofing" => options_proofing(app, ui),
+                "save" => options_save(app, ui),
+                "language" => options_language(app, ui),
+                "advanced" => options_advanced(app, ui),
+                "agents" => {
+                    section(ui, lang, "Agents");
+                    ui.label(lang.tr("Every command is available to scripts and AI agents: run `gridcraft-cli mcp` for an MCP server, or start the app with `--control <port>` for the JSON control channel."));
+                }
+                _ => options_general(app, ui, bs),
+            }
+        });
+    });
+}
+
+fn hint(ui: &mut Ui, text: &str) {
+    let t = Tokens::get(ui.ctx());
+    ui.label(RichText::new(text).font(theme::ui_font(11.5)).color(t.text_dim));
+}
+
+fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
+    let lang = app.ui.language;
+    section(ui, lang, "Interface");
+    egui::Grid::new("options_interface").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
         ui.label(lang.tr("Display theme"));
         let mode = app.ui.theme_mode();
         let current = match mode {
@@ -938,7 +1151,7 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
             "dark" => "Dark",
             _ => "Light",
         };
-        egui::ComboBox::from_id_salt("backstage_theme").width(160.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt("backstage_theme").width(200.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
             for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
                 if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
                     app.run_or_alert("view.theme", json!({"mode": value}));
@@ -946,36 +1159,76 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
             }
         });
         ui.end_row();
-        ui.label(lang.tr("Interface language"));
-        egui::ComboBox::from_id_salt("backstage_language").width(160.0).selected_text(lang.name()).show_ui(ui, |ui| {
-            for l in i18n::Language::ALL {
-                if ui.selectable_label(l == lang, l.name()).clicked() {
-                    app.run_or_alert("app.language.set", json!({"language": l.code()}));
+        // Interface size (#230), as in the View tab: the ribbon, its buttons, menus and dialogs
+        // grow together, on top of the desktop's scale.
+        ui.label(lang.tr("Interface size"));
+        let size = app.ui.interface_scale;
+        let text = |v: u16| if v == 100 { lang.tr("Auto").to_string() } else { format!("{v}%") };
+        egui::ComboBox::from_id_salt("backstage_interface_size").width(200.0).selected_text(text(size)).show_ui(ui, |ui| {
+            for v in [100, 75, 90, 110, 125, 150, 175, 200] {
+                if ui.selectable_label(v == size, text(v)).clicked() {
+                    app.run_or_alert("view.interfaceScale", json!({"percent": v}));
                 }
             }
         });
         ui.end_row();
     });
-    ui.add_space(6.0);
-    let mut formula_bar = app.session.prefs.formula_bar;
-    if ui.checkbox(&mut formula_bar, lang.tr("Show formula bar")).changed() {
-        app.run_or_alert("view.formulaBar", json!({"on": formula_bar}));
-    }
-    ui.add_space(18.0);
-    section(ui, lang, "Options|Editing");
-    let mut autocomplete = app.ui.autocomplete;
-    if ui.checkbox(&mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
-        app.run_or_alert("options.autoComplete", json!({"on": autocomplete}));
-    }
-    ui.add_space(18.0);
-    section(ui, lang, "Options|Save");
-    let mut autosave = app.grid.autosave();
-    if ui.checkbox(&mut autosave, lang.tr("Save .xlsx workbooks automatically after every change")).changed() {
-        app.grid.toggle_autosave();
-    }
-    let Some(calc) = app.session.active().map(|d| d.wb.calc.clone()) else { return };
-    ui.add_space(18.0);
-    section(ui, lang, "Formulas");
+    hint(
+        ui,
+        lang.tr(
+            "Makes the ribbon, its buttons, menus and dialogs larger or smaller, on top of your system's display scaling. Sheet zoom is separate.",
+        ),
+    );
+    ui.add_space(16.0);
+    section(ui, lang, "When creating new workbooks");
+    let prefs = app.session.prefs.clone();
+    egui::Grid::new("options_new_workbooks").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
+        ui.label(lang.tr("Use this as the default font"));
+        let fonts = ["Calibri", "Aptos", "Arial", "Times New Roman", "Cambria", "Tahoma", "Segoe UI", "Verdana"];
+        egui::ComboBox::from_id_salt("options_default_font").width(200.0).selected_text(&prefs.default_font).show_ui(ui, |ui| {
+            for f in fonts {
+                if ui.selectable_label(prefs.default_font == f, f).clicked() {
+                    app.run_or_alert("options.set", json!({"defaultFont": f}));
+                }
+            }
+        });
+        ui.end_row();
+        ui.label(lang.tr("Font size"));
+        let mut size = prefs.default_font_size;
+        if ui.add(egui::DragValue::new(&mut size).range(1.0..=409.0).speed(0.5)).changed() {
+            app.run_or_alert("options.set", json!({"defaultFontSize": size}));
+        }
+        ui.end_row();
+        ui.label(lang.tr("Include this many sheets"));
+        let mut sheets = prefs.sheets_in_new_workbook;
+        if ui.add(egui::DragValue::new(&mut sheets).range(1..=255)).changed() {
+            app.run_or_alert("options.set", json!({"sheetsInNewWorkbook": sheets}));
+        }
+        ui.end_row();
+    });
+    ui.add_space(16.0);
+    section(ui, lang, "Personalize");
+    ui.horizontal(|ui| {
+        ui.label(lang.tr("User name"));
+        let id = ui.make_persistent_id("options_user_name");
+        if !ui.ctx().memory(|m| m.has_focus(id)) {
+            bs.user_name.clone_from(&prefs.user_name);
+        }
+        let resp = ui.add(egui::TextEdit::singleline(&mut bs.user_name).id(id).desired_width(260.0));
+        if resp.lost_focus() && bs.user_name.trim() != prefs.user_name && !bs.user_name.trim().is_empty() {
+            app.run_or_alert("options.set", json!({"userName": bs.user_name.trim()}));
+        }
+    });
+    hint(ui, lang.tr("New comments and the workbook's Last Modified By are recorded under this name."));
+}
+
+fn options_formulas(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    section(ui, lang, "Calculation options");
+    let Some(calc) = app.session.active().map(|d| d.wb.calc.clone()) else {
+        dim(ui, lang.tr("Open a workbook to change how it calculates."));
+        return;
+    };
     ui.label(lang.tr("Workbook calculation"));
     use gridcraft_engine::model::CalcMode;
     for (mode, id, label) in [
@@ -994,6 +1247,73 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
     }
     ui.add_space(6.0);
     dim(ui, lang.tr("Calculation settings are saved with the workbook."));
+    ui.add_space(16.0);
+    section(ui, lang, "Working with formulas");
+    let mut autocomplete = app.ui.autocomplete;
+    if ui.checkbox(&mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
+        app.run_or_alert("options.autoComplete", json!({"on": autocomplete}));
+    }
+}
+
+fn options_proofing(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    section(ui, lang, "When correcting spelling");
+    let n = app.session.prefs.user_dictionary.len();
+    ui.label(format!("{}: {n}", lang.tr("Words added to the custom dictionary")));
+    hint(ui, lang.tr("Review › Spelling checks the sheet; Add to Dictionary keeps a word for every workbook."));
+}
+
+fn options_save(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    section(ui, lang, "Save workbooks");
+    let mut autosave = app.grid.autosave();
+    if ui.checkbox(&mut autosave, lang.tr("Save .xlsx workbooks automatically after every change")).changed() {
+        app.grid.toggle_autosave();
+    }
+}
+
+fn options_language(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    section(ui, lang, "Interface language");
+    ui.horizontal(|ui| {
+        ui.label(lang.tr("Interface language"));
+        egui::ComboBox::from_id_salt("backstage_language").width(200.0).selected_text(lang.name()).show_ui(ui, |ui| {
+            for l in i18n::Language::ALL {
+                if ui.selectable_label(l == lang, l.name()).clicked() {
+                    app.run_or_alert("app.language.set", json!({"language": l.code()}));
+                }
+            }
+        });
+    });
+}
+
+fn options_advanced(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    section(ui, lang, "Editing options");
+    let dir = app.session.prefs.enter_direction.clone();
+    ui.horizontal(|ui| {
+        ui.label(lang.tr("After pressing Enter, move selection"));
+        let label = |d: &str| match d {
+            "right" => "Right",
+            "up" => "Up",
+            "left" => "Left",
+            "none" => "Don't move",
+            _ => "Down",
+        };
+        egui::ComboBox::from_id_salt("options_enter_direction").width(140.0).selected_text(lang.tr(label(&dir))).show_ui(ui, |ui| {
+            for d in ["down", "right", "up", "left", "none"] {
+                if ui.selectable_label(dir == d, lang.tr(label(d))).clicked() {
+                    app.run_or_alert("options.set", json!({"enterDirection": d}));
+                }
+            }
+        });
+    });
+    ui.add_space(16.0);
+    section(ui, lang, "Display");
+    let mut formula_bar = app.session.prefs.formula_bar;
+    if ui.checkbox(&mut formula_bar, lang.tr("Show formula bar")).changed() {
+        app.run_or_alert("view.formulaBar", json!({"on": formula_bar}));
+    }
 }
 
 #[cfg(test)]

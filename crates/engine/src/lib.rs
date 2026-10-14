@@ -302,6 +302,20 @@ impl Session {
     pub fn new_workbook(&mut self) -> usize {
         let n = (1..).find(|n| !self.docs.iter().any(|d| d.title == format!("Book{n}") && d.path.is_none())).unwrap_or(1);
         let mut wb = Workbook::new();
+        // File › Options › General › When creating new workbooks: the Normal style's font.
+        let (font, size) = (self.prefs.default_font.trim(), self.prefs.default_font_size);
+        if (!font.is_empty() && font != gridcraft_model::DEFAULT_FONT)
+            || (size != gridcraft_model::DEFAULT_FONT_SIZE && (1.0..=409.0).contains(&size))
+        {
+            let mut normal = gridcraft_model::Style::default();
+            if !font.is_empty() {
+                normal.font.name = font.to_string();
+            }
+            if (1.0..=409.0).contains(&size) {
+                normal.font.size = size;
+            }
+            wb.styles = gridcraft_model::StyleTable::with_default(normal);
+        }
         for _ in 1..self.prefs.sheets_in_new_workbook.clamp(1, 255) {
             let name = wb.next_sheet_name();
             wb.sheets.push(Arc::new(gridcraft_model::Sheet::new(name)));

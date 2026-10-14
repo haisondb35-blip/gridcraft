@@ -2758,7 +2758,10 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                         if m.alt || m.ctrl {
                             app.begin_edit(None, false);
                         } else {
-                            app.move_after_enter(if shift { -1 } else { 1 }, 0);
+                            let (dr, dc) = app.enter_step(shift);
+                            if dr != 0 || dc != 0 {
+                                app.move_after_enter(dr, dc);
+                            }
                         }
                     }
                     Key::Tab => app.move_after_enter(0, if shift { -1 } else { 1 }),
