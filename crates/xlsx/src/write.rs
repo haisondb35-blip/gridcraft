@@ -419,9 +419,18 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         ("dc:creator", &p.author),
         ("cp:keywords", &p.keywords),
         ("dc:description", &p.description),
+        ("cp:category", &p.category),
+        ("cp:lastModifiedBy", &p.last_modified_by),
+        ("cp:lastPrinted", &p.last_printed),
     ] {
         if !v.is_empty() {
             let _ = write!(core, "<{tag}>{}</{tag}>", esc(v));
+        }
+    }
+    // The dates Excel shows in File › Info (ECMA-376 Part 2, 7.2: dcterms dates typed W3CDTF).
+    for (tag, v) in [("dcterms:created", &p.created), ("dcterms:modified", &p.modified)] {
+        if !v.is_empty() {
+            let _ = write!(core, "<{tag} xsi:type=\"dcterms:W3CDTF\">{}</{tag}>", esc(v));
         }
     }
     core.push_str("</cp:coreProperties>");
