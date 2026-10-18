@@ -6,11 +6,13 @@
 //! shared and array formulas), cell formatting (fonts, fills, borders, alignment, number formats,
 //! protection; see `styles`), the 1904 date system, merged cells, column widths, row heights,
 //! defined names, print areas, print titles and the calculation settings (mode, iteration,
-//! precision as displayed), cell comments (see `notes`) and conditional formats (see `cond`).
-//! Everything else (charts, pictures, validation, macros) is skipped with a warning.
+//! precision as displayed), cell comments (see `notes`), conditional formats (see `cond`) and
+//! PNG/JPEG pictures (see `drawing`). Everything else (charts, other pictures, validation,
+//! macros) is skipped with a warning.
 //! Encrypted workbooks and pre-BIFF8 versions are refused.
 
 mod cond;
+mod drawing;
 mod formula;
 mod ftab;
 mod notes;
@@ -22,7 +24,8 @@ use std::sync::Arc;
 
 use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
 use gridcraft_model::{
-    CalcMode, CalcSettings, Cell, CfRule, Comment, CondFormat, DefinedName, Formula, LineInfo, Sheet, StyleId, StyleTable, Visibility, Workbook,
+    Anchor, AnchorMode, CalcMode, CalcSettings, Cell, CfRule, Comment, CondFormat, DefinedName, Formula, Image, LineInfo, Sheet, StyleId, StyleTable,
+    Visibility, Workbook,
 };
 
 use crate::cfb::Compound;
@@ -38,6 +41,8 @@ const MAX_SHEETS: usize = 4096;
 const MAX_NAMES: usize = 65_536;
 const MAX_XFS: usize = 65_536;
 const MAX_MERGES: usize = 100_000;
+/// Bytes of drawing records kept for one workbook or sheet at most.
+const MAX_DRAWING: usize = 256 * 1024 * 1024;
 /// Records read from the whole Workbook stream at most (a 65,536 × 256 sheet has fewer). One
 /// allowance shared by every substream: many BoundSheet records pointing into one huge
 /// substream must not each get their own.
@@ -130,6 +135,8 @@ struct Globals {
     xfs: Vec<styles::Xf>,
     /// A Palette record's colours (0xRRGGBB), replacing the standard ones from index 8.
     palette: Vec<u32>,
+    /// The workbook's pictures (MsoDrawingGroup's BStore), `pib` 1 first.
+    blips: Vec<drawing::Blip>,
     sst: Vec<Arc<str>>,
     links: Links,
     names: Vec<Lbl>,
@@ -207,7 +214,7 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
     // The overview comes first.
     report.warnings.insert(
         0,
-        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, cell formatting (fonts, fills, borders, alignment, number formats), merged cells, column widths, row heights, defined names, comments and conditional formatting were read. Charts and pictures are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
+        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, cell formatting (fonts, fills, borders, alignment, number formats), merged cells, column widths, row heights, defined names, comments, conditional formatting and pictures were read. Charts are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
     );
     Ok((wb, report))
 }
@@ -236,6 +243,7 @@ fn globals(stream: &[u8], budget: &mut Budget, report: &mut ReadReport) -> Resul
     }
     let mut g = Globals::default();
     let mut offsets = std::collections::HashSet::new();
+    let mut dgg: Vec<u8> = Vec::new();
     while let Some(rec) = recs.next_record()? {
         budget.record()?;
         let mut c = Cursor::new(&rec.parts);
@@ -288,6 +296,11 @@ fn globals(stream: &[u8], budget: &mut Budget, report: &mut ReadReport) -> Resul
                 }
             }
             0x0092 => g.palette = styles::palette_record(&mut c)?,
+            0x00EB => {
+                if dgg.len() < MAX_DRAWING {
+                    dgg.extend(c.rest());
+                }
+            }
             0x00FC => g.sst = shared_strings(&mut c, budget)?,
             0x01AE => {
                 let _ctab = c.u16()?;
@@ -329,6 +342,7 @@ fn globals(stream: &[u8], budget: &mut Budget, report: &mut ReadReport) -> Resul
     // The same test `defined_names` applies, before any cell formula is decoded.
     let skipped = g.names.iter().map(|l| !l.rgce.is_empty() && decode(&l.rgce, &l.rgcb, CellRef::new(0, 0), Mode::Name, &g.links).is_err()).collect();
     g.links.skipped = skipped;
+    g.blips = drawing::blip_store(&dgg);
     Ok(g)
 }
 
@@ -438,6 +452,8 @@ struct SheetState<'g> {
     cf_ranges: Vec<RangeRef>,
     /// The workbook's colour table, for conditional formats.
     palette: [u32; 64],
+    /// The sheet's MsoDrawing records, joined (shapes may run across them).
+    drawing: Vec<u8>,
 }
 
 impl SheetState<'_> {
@@ -534,6 +550,7 @@ fn worksheet(
         notes: vec![],
         cf_ranges: vec![],
         palette: styles::palette(&g.palette),
+        drawing: vec![],
     };
     let mut depth = 1usize;
     while let Some(rec) = recs.next_record()? {
@@ -579,6 +596,38 @@ fn worksheet(
             let style = st.sheet.style_id(p.pos);
             st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style });
         }
+    }
+    // Pictures: shapes that name a stored picture, placed by their cell anchors.
+    let mut skipped_pictures = 0usize;
+    for shape in drawing::picture_shapes(&std::mem::take(&mut st.drawing)) {
+        let blip = usize::try_from(shape.pib).ok().and_then(|i| i.checked_sub(1)).and_then(|i| g.blips.get(i)).cloned().flatten();
+        let Some((data, mime)) = blip else {
+            skipped_pictures += 1;
+            continue;
+        };
+        let [c0, dx0, r0, dy0, c1, dx1, r1, dy1] = shape.anchor;
+        let (c0, r0, c1, r1) = (u32::from(c0).min(255), u32::from(r0), u32::from(c1).min(255), u32::from(r1));
+        if r0 >= MAX_ROWS || r1 >= MAX_ROWS {
+            continue;
+        }
+        let sheet = &st.sheet;
+        // Fractions of a cell: 1024ths of a column's width, 256ths of a row's height.
+        let x = |c: u32, d: u16| sheet.col_left(c) + (sheet.col_left(c + 1) - sheet.col_left(c)) * f64::from(d.min(1024)) / 1024.0;
+        let y = |r: u32, d: u16| sheet.row_top(r) + (sheet.row_top(r + 1) - sheet.row_top(r)) * f64::from(d.min(256)) / 256.0;
+        let (x0, y0, x1, y1) = (x(c0, dx0), y(r0, dy0), x(c1, dx1), y(r1, dy1));
+        let anchor = Anchor {
+            cell: CellRef::new(r0, c0),
+            dx: (x0 - sheet.col_left(c0)).max(0.0) as f32,
+            dy: (y0 - sheet.row_top(r0)).max(0.0) as f32,
+            width: (x1 - x0).max(1.0) as f32,
+            height: (y1 - y0).max(1.0) as f32,
+            mode: AnchorMode::MoveAndSize,
+        };
+        let id = st.sheet.images.len() as u32 + 1;
+        st.sheet.images.push(Image { id, anchor, data, mime: mime.to_string(), alt: String::new() });
+    }
+    if skipped_pictures > 0 {
+        report.warn("Some pictures in .xls files are in a format GridCraft doesn't show yet (metafiles, bitmaps) and were skipped.");
     }
     // Comments: a Note names its text's object, whose TxO came earlier in the substream.
     for (cell, object, author, visible) in std::mem::take(&mut st.notes) {
@@ -779,6 +828,9 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
             let ot = c.u16()?;
             let id = c.u16()?;
             st.note_object = (ft == 0x15 && ot == notes::OT_NOTE).then_some(id);
+            if ft == 0x15 && ot == 5 {
+                report.warn("Charts in .xls files are not imported yet.");
+            }
         }
         // TxO: the text of the comment object just described.
         0x01B6 => {
@@ -800,7 +852,11 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
                 st.notes.push((cell, object, author, flags & 0x0002 != 0));
             }
         }
-        0x00EC => report.warn("Pictures, charts and shapes in .xls files are not imported yet."),
+        0x00EC => {
+            if st.drawing.len() < MAX_DRAWING {
+                st.drawing.extend(c.rest());
+            }
+        }
         0x01B0 => st.cf_ranges = cond::condfmt(&mut c)?,
         0x01B1 => {
             let g = st.g;
