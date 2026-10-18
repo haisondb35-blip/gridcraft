@@ -805,3 +805,36 @@ fn reads_pictures() {
     assert!((img.anchor.width - width).abs() < 0.01 && (img.anchor.height - height).abs() < 0.01, "{:?}", img.anchor);
     assert!(report.warnings.iter().any(|w| w.contains("metafiles")), "{:?}", report.warnings);
 }
+
+/// AutoFilter: the built-in _FilterDatabase name (13) holds the range, and the sheet's
+/// AutoFilterInfo record says the filter is on; a name left without it turns nothing on.
+#[test]
+fn reads_the_autofilter_range() {
+    let book = |filter_on: bool| {
+        // _FilterDatabase on sheet 1 (hidden, built-in 13) = Sheet1!$A$8:$DH$19 (PtgArea3d).
+        let area = cat(&[&[0x3B], &0u16.to_le_bytes(), &u16s(&[7, 18, 0, 111])]);
+        let lbl = rec(0x0018, &cat(&[&u16s(&[0x0021]), &[0, 1], &u16s(&[area.len() as u16, 0, 1]), &[0; 4], &[0, 13], &area]));
+        let xf = rec(0x00E0, &cat(&[&u16s(&[0, 0, 0]), &[0; 14]]));
+        let globals = |pos: u32| {
+            cat(&[
+                &bof(0x0005),
+                &xf,
+                &rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 6, 0], b"Sheet1"])),
+                &rec(0x01AE, &u16s(&[1, 0x0401])),
+                &rec(0x0017, &cat(&[&u16s(&[1]), &u16s(&[0, 0, 0])])),
+                &lbl,
+                &eof(),
+            ])
+        };
+        let info = if filter_on { rec(0x009D, &u16s(&[112])) } else { vec![] };
+        let sheet = cat(&[&bof(0x0010), &rec(0x0203, &cat(&[&cell(7, 0, 0), &1.0f64.to_le_bytes()])), &info, &eof()]);
+        let stream = cat(&[&globals(globals(0).len() as u32), &sheet]);
+        read_xls(&compound("Workbook", &stream)).unwrap().0
+    };
+    let wb = book(true);
+    let af = wb.sheets[0].autofilter.as_ref().expect("the filter is on");
+    assert_eq!(af.range, RangeRef::parse("A8:DH19").unwrap());
+    assert!(af.criteria.is_empty());
+    assert!(!wb.names.iter().any(|n| n.name == "_FilterDatabase"), "a built-in name, not a user one");
+    assert!(book(false).sheets[0].autofilter.is_none(), "the name alone doesn't turn a filter on");
+}

@@ -24,8 +24,8 @@ use std::sync::Arc;
 
 use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
 use gridcraft_model::{
-    Anchor, AnchorMode, CalcMode, CalcSettings, Cell, CfRule, Comment, CondFormat, DefinedName, Formula, Image, LineInfo, Sheet, StyleId, StyleTable,
-    Visibility, Workbook,
+    Anchor, AnchorMode, AutoFilter, CalcMode, CalcSettings, Cell, CfRule, Comment, CondFormat, DefinedName, Formula, Image, LineInfo, Sheet, StyleId,
+    StyleTable, Visibility, Workbook,
 };
 
 use crate::cfb::Compound;
@@ -181,6 +181,8 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
 
     // BoundSheet8 index → model sheet index.
     let mut model_index: Vec<Option<usize>> = Vec::with_capacity(g.sheets.len());
+    // Per model sheet: its AutoFilter is on.
+    let mut filtered: Vec<bool> = Vec::with_capacity(g.sheets.len());
     for bs in &g.sheets {
         if bs.kind != 0 {
             report.warn(match bs.kind {
@@ -192,7 +194,7 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
             continue;
         }
         wb.check_sheet_name(&bs.name, None).map_err(invalid)?;
-        let Some((mut sheet, calc)) = worksheet(&stream, bs, &g, &styles, &mut budget, &mut report)? else {
+        let Some((mut sheet, calc, filter_on)) = worksheet(&stream, bs, &g, &styles, &mut budget, &mut report)? else {
             report.warn("Dialog sheets and unreadable sheets were skipped.");
             model_index.push(None);
             continue;
@@ -203,13 +205,14 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
             wb.calc = calc;
         }
         model_index.push(Some(wb.sheets.len()));
+        filtered.push(filter_on);
         wb.sheets.push(Arc::new(sheet));
     }
     if wb.sheets.is_empty() {
         return Err(invalid("the workbook has no worksheets GridCraft can read"));
     }
     wb.calc.precision_as_displayed = g.precision_as_displayed;
-    defined_names(&g, &model_index, &mut wb, &mut report);
+    defined_names(&g, &model_index, &filtered, &mut wb, &mut report);
     wb.active_sheet = wb.sheets.iter().position(|s| s.visibility == Visibility::Visible).unwrap_or(0);
     // The overview comes first.
     report.warnings.insert(
@@ -454,6 +457,8 @@ struct SheetState<'g> {
     palette: [u32; 64],
     /// The sheet's MsoDrawing records, joined (shapes may run across them).
     drawing: Vec<u8>,
+    /// An AutoFilterInfo record: the sheet's filter is on (its range is the _FilterDatabase name).
+    filtered: bool,
 }
 
 impl SheetState<'_> {
@@ -523,7 +528,7 @@ fn worksheet(
     styles: &[StyleId],
     budget: &mut Budget,
     report: &mut ReadReport,
-) -> Result<Option<(Sheet, CalcSettings)>, IoError> {
+) -> Result<Option<(Sheet, CalcSettings, bool)>, IoError> {
     if bs.pos >= stream.len() {
         return Err(invalid(format!("sheet '{}' points outside the Workbook stream", bs.name)));
     }
@@ -551,6 +556,7 @@ fn worksheet(
         cf_ranges: vec![],
         palette: styles::palette(&g.palette),
         drawing: vec![],
+        filtered: false,
     };
     let mut depth = 1usize;
     while let Some(rec) = recs.next_record()? {
@@ -640,7 +646,7 @@ fn worksheet(
     for why in &st.unsupported {
         report.warn(format!("Some formulas use {why}; their saved results were kept as values."));
     }
-    Ok(Some((st.sheet, st.calc)))
+    Ok(Some((st.sheet, st.calc, st.filtered)))
 }
 
 fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, report: &mut ReadReport) -> Result<(), IoError> {
@@ -852,6 +858,7 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
                 st.notes.push((cell, object, author, flags & 0x0002 != 0));
             }
         }
+        0x009D => st.filtered = true,
         0x00EC => {
             if st.drawing.len() < MAX_DRAWING {
                 st.drawing.extend(c.rest());
@@ -937,7 +944,7 @@ fn formula_cell(c: &mut Cursor<'_, '_>, st: &mut SheetState<'_>, budget: &mut Bu
     Ok(())
 }
 
-fn defined_names(g: &Globals, model_index: &[Option<usize>], wb: &mut Workbook, report: &mut ReadReport) {
+fn defined_names(g: &Globals, model_index: &[Option<usize>], filtered: &[bool], wb: &mut Workbook, report: &mut ReadReport) {
     let scope_of = |itab: u16| -> Option<Option<usize>> {
         if itab == 0 {
             return Some(None);
@@ -964,6 +971,20 @@ fn defined_names(g: &Globals, model_index: &[Option<usize>], wb: &mut Workbook, 
                     let (rows, cols) = crate::read::parse_print_titles(&text);
                     sheet.print.title_rows = rows;
                     sheet.print.title_cols = cols;
+                }
+            }
+            // _FilterDatabase: the AutoFilter's range, on a sheet whose filter is on (the name can
+            // outlive the filter). The criteria aren't read yet: the arrows come back unfiltered.
+            Some(13) => {
+                let Some(si) = scope else { continue };
+                if !filtered.get(si).copied().unwrap_or(false) {
+                    continue;
+                }
+                let area = text.rsplit('!').next().unwrap_or("").replace('$', "");
+                if let (Some(range), Some(sheet)) = (RangeRef::parse(&area), wb.sheet_mut(si))
+                    && sheet.autofilter.is_none()
+                {
+                    sheet.autofilter = Some(AutoFilter { range, criteria: vec![] });
                 }
             }
             Some(_) => {}
