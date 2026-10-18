@@ -594,3 +594,73 @@ fn a_format_shorter_than_its_count_keeps_its_characters() {
     assert_eq!(fmt("A3"), "0.000");
     assert!(report.warnings.iter().any(|w| w.contains("declared length")), "{:?}", report.warnings);
 }
+
+/// Fonts, fills, borders, alignment and a custom palette come through from the Font, XF and
+/// Palette records ([MS-XLS] 2.4.122, 2.4.353, 2.4.188); the default cell format (here the
+/// first XF, as the file has fewer than 16) is the workbook's Normal style.
+#[test]
+fn reads_fonts_fills_borders_and_alignment() {
+    use gridcraft_model::{BorderStyle, Color, HAlign, PatternType, Underline, VAlign};
+    // Font: height (1/20 pt), flags (2 = italic), colour index, weight, script, underline,
+    // family, character set, reserved, then the name as a ShortXLUnicodeString.
+    let font = |name: &str, height: u16, flags: u16, icv: u16, weight: u16, underline: u8| {
+        rec(0x0031, &cat(&[&u16s(&[height, flags, icv, weight, 0]), &[underline, 0, 0, 0], &[name.len() as u8, 0], name.as_bytes()]))
+    };
+    // XF: font, format, protection flags, alignment byte, rotation, indent byte, used flags,
+    // then the border/fill words.
+    let xf = |ifnt: u16, align: u8, rotation: u8, a: u32, b: u32, fill: u16| {
+        rec(0x00E0, &cat(&[&u16s(&[ifnt, 0, 1]), &[align, rotation, 0, 0], &a.to_le_bytes(), &b.to_le_bytes(), &fill.to_le_bytes()]))
+    };
+    // Thin borders on all four sides in colour 8; a solid yellow (13) fill.
+    let boxed = 0x1111 | (8 << 16) | (8 << 23);
+    let solid = 8 | (8 << 7) | (1 << 26);
+    let globals = |pos: u32| {
+        cat(&[
+            &bof(0x0005),
+            &font("Arial", 200, 0, 0x7FFF, 400, 0),
+            &font("Arial", 200, 0, 0x7FFF, 400, 0),
+            &font("Arial", 200, 0, 0x7FFF, 400, 0),
+            &font("Arial", 200, 0, 0x7FFF, 400, 0),
+            // Index 5 (index 4 is never written): bold italic red underlined Times New Roman 13.
+            &font("Times New Roman", 260, 2, 10, 700, 1),
+            // Colour 8 is redefined: 0x112233.
+            &rec(0x0092, &cat(&[&u16s(&[1]), &[0x11, 0x22, 0x33, 0]])),
+            &xf(0, 0x20, 0, 0, 0, 64 | (65 << 7)),
+            // Centred both ways, wrapped, 45 degrees.
+            &xf(5, 0x02 | 0x08 | 0x10, 45, boxed, solid, 13 | (65 << 7)),
+            // 135 is 45 degrees clockwise.
+            &xf(0, 0x20, 135, 0, 0, 64 | (65 << 7)),
+            &rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 6, 0], b"Sheet1"])),
+            &eof(),
+        ])
+    };
+    let sheet = cat(&[
+        &bof(0x0010),
+        &rec(0x0203, &cat(&[&cell(0, 0, 0), &1.0f64.to_le_bytes()])),
+        &rec(0x0203, &cat(&[&cell(1, 1, 1), &2.0f64.to_le_bytes()])),
+        &rec(0x0203, &cat(&[&cell(2, 2, 2), &3.0f64.to_le_bytes()])),
+        &eof(),
+    ]);
+    let stream = cat(&[&globals(globals(0).len() as u32), &sheet]);
+    let (wb, report) = read_xls(&compound("Workbook", &stream)).unwrap();
+    let sh = &wb.sheets[0];
+    let style = |a1: &str| wb.styles.get(sh.style_id(CellRef::parse(a1).unwrap())).clone();
+    // The Normal style is the file's: Arial 10 with the automatic colour.
+    assert_eq!(sh.style_id(CellRef::parse("A1").unwrap()), gridcraft_model::StyleId::DEFAULT);
+    let normal = style("A1");
+    assert_eq!((normal.font.name.as_str(), normal.font.size, normal.font.color), ("Arial", 10.0, Color::Auto));
+    let b2 = style("B2");
+    assert_eq!((b2.font.name.as_str(), b2.font.size), ("Times New Roman", 13.0));
+    assert!(b2.font.bold && b2.font.italic);
+    assert_eq!(b2.font.underline, Underline::Single);
+    assert_eq!(b2.font.color, Color::Rgb(0xFF0000));
+    assert_eq!((b2.fill.pattern, b2.fill.fg, b2.fill.bg), (PatternType::Solid, Color::Rgb(0xFFFF00), Color::Auto));
+    for line in [b2.borders.left, b2.borders.right, b2.borders.top, b2.borders.bottom] {
+        assert_eq!((line.style, line.color), (BorderStyle::Thin, Color::Rgb(0x112233)), "the palette's colour 8");
+    }
+    assert!(b2.borders.diag_down.is_none() && b2.borders.diag_up.is_none());
+    assert_eq!((b2.align.h, b2.align.v, b2.align.wrap, b2.align.rotation), (HAlign::Center, VAlign::Center, true, 45));
+    assert!(b2.protection.locked);
+    assert_eq!(style("C3").align.rotation, -45);
+    assert!(report.warnings.first().is_some_and(|w| w.contains("cell formatting (fonts, fills, borders")), "{:?}", report.warnings);
+}
