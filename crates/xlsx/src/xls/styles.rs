@@ -122,11 +122,11 @@ pub(super) fn palette_record(c: &mut Cursor<'_, '_>) -> Result<Vec<u32>, IoError
 
 /// A colour index: 0..64 in the table, anything else (64 and 65 are the system's window text
 /// and background, 0x7FFF the font's automatic colour) is automatic.
-fn color(icv: u16, palette: &[u32; 64]) -> Color {
+pub(super) fn color(icv: u16, palette: &[u32; 64]) -> Color {
     palette.get(usize::from(icv)).map_or(Color::Auto, |rgb| Color::Rgb(*rgb))
 }
 
-fn border_style(dg: u8) -> BorderStyle {
+pub(super) fn border_style(dg: u8) -> BorderStyle {
     match dg {
         1 => BorderStyle::Thin,
         2 => BorderStyle::Medium,
@@ -145,7 +145,7 @@ fn border_style(dg: u8) -> BorderStyle {
     }
 }
 
-fn pattern(fls: u8) -> PatternType {
+pub(super) fn pattern(fls: u8) -> PatternType {
     match fls {
         1 => PatternType::Solid,
         2 => PatternType::Gray50,

@@ -6,10 +6,11 @@
 //! shared and array formulas), cell formatting (fonts, fills, borders, alignment, number formats,
 //! protection; see `styles`), the 1904 date system, merged cells, column widths, row heights,
 //! defined names, print areas, print titles and the calculation settings (mode, iteration,
-//! precision as displayed) and cell comments (see `notes`). Everything else (charts, pictures,
-//! conditional formats, validation, macros) is skipped with a warning.
+//! precision as displayed), cell comments (see `notes`) and conditional formats (see `cond`).
+//! Everything else (charts, pictures, validation, macros) is skipped with a warning.
 //! Encrypted workbooks and pre-BIFF8 versions are refused.
 
+mod cond;
 mod formula;
 mod ftab;
 mod notes;
@@ -20,7 +21,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
-use gridcraft_model::{CalcMode, CalcSettings, Cell, Comment, DefinedName, Formula, LineInfo, Sheet, StyleId, StyleTable, Visibility, Workbook};
+use gridcraft_model::{
+    CalcMode, CalcSettings, Cell, CfRule, Comment, CondFormat, DefinedName, Formula, LineInfo, Sheet, StyleId, StyleTable, Visibility, Workbook,
+};
 
 use crate::cfb::Compound;
 use crate::tables::{builtin_format, col_width_to_px, pt_to_px};
@@ -204,7 +207,7 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
     // The overview comes first.
     report.warnings.insert(
         0,
-        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, cell formatting (fonts, fills, borders, alignment, number formats), merged cells, column widths, row heights, defined names and comments were read. Charts, pictures and conditional formatting are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
+        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, cell formatting (fonts, fills, borders, alignment, number formats), merged cells, column widths, row heights, defined names, comments and conditional formatting were read. Charts and pictures are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
     );
     Ok((wb, report))
 }
@@ -431,6 +434,10 @@ struct SheetState<'g> {
     note_texts: HashMap<u16, String>,
     /// Note records: the cell, its comment object, the author and whether it shows.
     notes: Vec<(CellRef, u16, String, bool)>,
+    /// The ranges of the CondFmt record whose CF rules follow.
+    cf_ranges: Vec<RangeRef>,
+    /// The workbook's colour table, for conditional formats.
+    palette: [u32; 64],
 }
 
 impl SheetState<'_> {
@@ -525,6 +532,8 @@ fn worksheet(
         note_object: None,
         note_texts: HashMap::new(),
         notes: vec![],
+        cf_ranges: vec![],
+        palette: styles::palette(&g.palette),
     };
     let mut depth = 1usize;
     while let Some(rec) = recs.next_record()? {
@@ -792,7 +801,34 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
             }
         }
         0x00EC => report.warn("Pictures, charts and shapes in .xls files are not imported yet."),
-        0x01B0 | 0x0879 => report.warn("Conditional formatting in .xls files is not imported yet."),
+        0x01B0 => st.cf_ranges = cond::condfmt(&mut c)?,
+        0x01B1 => {
+            let g = st.g;
+            let rule =
+                cond::cf(&mut c, &st.palette, |ifmt| g.formats.get(&ifmt).cloned().or_else(|| builtin_format(u32::from(ifmt)).map(str::to_string)))?;
+            let Some(first) = st.cf_ranges.first() else { return Ok(()) };
+            // The formulas are relative to the top-left cell of the first range.
+            let formula = |rgce: &[u8]| -> Option<String> {
+                if rgce.is_empty() {
+                    return None;
+                }
+                decode(rgce, &[], first.start, Mode::Cell, &g.links).ok().map(|e| gridcraft_formula::print(&e))
+            };
+            let style = Box::new(rule.style);
+            let cf_rule = match (rule.kind, rule.op) {
+                (1, Some(op)) => formula(&rule.rgce1).map(|a| CfRule::CellIs { op, a, b: formula(&rule.rgce2), style }),
+                (2, _) => formula(&rule.rgce1).map(|formula| CfRule::Expression { formula, style }),
+                _ => None,
+            };
+            match cf_rule {
+                Some(rule) if st.sheet.cond_formats.len() < cond::MAX_CF_RANGES => {
+                    let priority = st.sheet.cond_formats.len() as u32 + 1;
+                    st.sheet.cond_formats.push(CondFormat { ranges: st.cf_ranges.clone(), rule, priority, stop_if_true: false });
+                }
+                _ => report.warn("Some conditional formatting rules in .xls files could not be read and were skipped."),
+            }
+        }
+        0x0879 => report.warn("Some newer conditional formats (Excel 2007 data bars, colour scales, icon sets) in .xls files are not imported yet."),
         0x01B2 => report.warn("Data validation in .xls files is not imported yet."),
         0x01B8 => report.warn("Hyperlinks in .xls files are not imported yet."),
         0x00B0 => report.warn("PivotTables in .xls files are not imported yet; their values were kept."),

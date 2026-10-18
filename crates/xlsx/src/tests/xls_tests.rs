@@ -714,3 +714,51 @@ fn reads_cell_comments() {
     assert_eq!(comments.len(), 3);
     assert!(!report.warnings.iter().any(|w| w.contains("comments in .xls")), "{:?}", report.warnings);
 }
+
+/// Conditional formats: a CondFmt record's ranges, then CF rules ([MS-XLS] 2.4.56, 2.4.42): a
+/// "cell value greater than 100" rule shown bold red on yellow (a DXFN with a font and a pattern
+/// block), and a formula rule whose relative reference is to the range's top-left cell.
+#[test]
+fn reads_conditional_formats() {
+    use gridcraft_model::{CfOperator, CfRule, Color, PatternType};
+    // DXFN: flags (font block 26, pattern block 29; foreground colour unset, bit 17), flags2,
+    // the 118-byte font block, then the pattern block.
+    let mut font = vec![0u8; 118];
+    font[64..68].copy_from_slice(&u32::MAX.to_le_bytes());
+    font[72..74].copy_from_slice(&700u16.to_le_bytes());
+    font[80..84].copy_from_slice(&10u32.to_le_bytes());
+    font[88..92].copy_from_slice(&0x82u32.to_le_bytes());
+    font[92..96].copy_from_slice(&1u32.to_le_bytes());
+    font[96..100].copy_from_slice(&1u32.to_le_bytes());
+    let dxfn = cat(&[&((1u32 << 26) | (1 << 29) | (1 << 17)).to_le_bytes(), &0u16.to_le_bytes(), &font, &u16s(&[1 << 10, 64 | (13 << 7)])]);
+    let greater = cat(&[&[0x1E], &100u16.to_le_bytes()]);
+    // A relative reference (PtgRefN, both offsets 0) to the range's top-left cell, then > 5.
+    let relative = cat(&[&[0x2C], &u16s(&[0, 0xC000]), &[0x1E], &5u16.to_le_bytes(), &[0x0D]]);
+    let cf = |kind: u8, op: u8, rgce: &[u8], dxfn: &[u8]| rec(0x01B1, &cat(&[&[kind, op], &u16s(&[rgce.len() as u16, 0]), dxfn, rgce]));
+    // CondFmt: rule count, flags, bounding range, then the range list (B2:C4).
+    let condfmt = rec(0x01B0, &cat(&[&u16s(&[2, 0]), &u16s(&[1, 3, 1, 2]), &u16s(&[1]), &u16s(&[1, 3, 1, 2])]));
+    let xf = rec(0x00E0, &cat(&[&u16s(&[0, 0, 0]), &[0; 14]]));
+    let globals = |pos: u32| cat(&[&bof(0x0005), &xf, &rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 6, 0], b"Sheet1"])), &eof()]);
+    let sheet = cat(&[
+        &bof(0x0010),
+        &rec(0x0203, &cat(&[&cell(1, 1, 0), &150.0f64.to_le_bytes()])),
+        &condfmt,
+        &cf(1, 5, &greater, &dxfn),
+        &cf(2, 0, &relative, &dxfn),
+        &eof(),
+    ]);
+    let stream = cat(&[&globals(globals(0).len() as u32), &sheet]);
+    let (wb, report) = read_xls(&compound("Workbook", &stream)).unwrap();
+    let cfs = &wb.sheets[0].cond_formats;
+    assert_eq!(cfs.len(), 2, "{:?}", report.warnings);
+    assert_eq!(cfs[0].ranges, vec![RangeRef::parse("B2:C4").unwrap()]);
+    assert_eq!((cfs[0].priority, cfs[1].priority), (1, 2));
+    let CfRule::CellIs { op, a, b, style } = &cfs[0].rule else { panic!("{:?}", cfs[0].rule) };
+    assert_eq!((*op, a.as_str(), b.as_ref()), (CfOperator::Greater, "100", None));
+    assert!(style.font.bold && !style.font.italic);
+    assert_eq!(style.font.color, Color::Rgb(0xFF0000));
+    assert_eq!((style.fill.pattern, style.fill.fg), (PatternType::Solid, Color::Rgb(0xFFFF00)));
+    let CfRule::Expression { formula, .. } = &cfs[1].rule else { panic!("{:?}", cfs[1].rule) };
+    assert_eq!(formula, "B2>5");
+    assert!(report.warnings.first().is_some_and(|w| w.contains("conditional formatting were read")), "{:?}", report.warnings);
+}
