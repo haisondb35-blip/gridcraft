@@ -664,3 +664,53 @@ fn reads_fonts_fills_borders_and_alignment() {
     assert_eq!(style("C3").align.rotation, -45);
     assert!(report.warnings.first().is_some_and(|w| w.contains("cell formatting (fonts, fills, borders")), "{:?}", report.warnings);
 }
+
+/// Comments: an Obj record describes a comment object (FtCmo, object type 0x19), the TxO after
+/// it holds the text in Continue records, and the Note record names the cell, the object and the
+/// author ([MS-XLS] 2.4.181, 2.4.329, 2.4.179). Vietnamese text and author come through.
+#[test]
+fn reads_cell_comments() {
+    let wide = |s: &str| -> Vec<u8> { s.encode_utf16().flat_map(u16::to_le_bytes).collect() };
+    // Obj: FtCmo (ft 0x15, cb 0x12, ot 0x19 comment, id, flags, reserved), then FtEnd.
+    let obj = |id: u16| rec(0x005D, &cat(&[&u16s(&[0x15, 0x12, 0x19, id, 0x4011]), &[0; 12], &u16s(&[0, 0])]));
+    // TxO: flags, rotation, reserved, character count, runs length, font, reserved; the text and
+    // the formatting runs follow in Continue records.
+    let txo = |text: &str| {
+        let n = text.encode_utf16().count() as u16;
+        cat(&[
+            &rec(0x01B6, &cat(&[&u16s(&[0x0212, 0]), &[0; 6], &u16s(&[n, 16, 0, 0])])),
+            &rec(0x003C, &cat(&[&[1], &wide(text)])),
+            &rec(0x003C, &[0; 16]),
+        ])
+    };
+    // Note: row, column, flags (0x0002: shown), object id, author (XLUnicodeString, UTF-16).
+    let note = |r: u16, c: u16, flags: u16, id: u16, author: &str| {
+        rec(0x001C, &cat(&[&u16s(&[r, c, flags, id]), &(author.encode_utf16().count() as u16).to_le_bytes(), &[1], &wide(author), &[0]]))
+    };
+    let xf = rec(0x00E0, &cat(&[&u16s(&[0, 0, 0]), &[0; 14]]));
+    let globals = |pos: u32| cat(&[&bof(0x0005), &xf, &rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 6, 0], b"Sheet1"])), &eof()]);
+    let sheet = cat(&[
+        &bof(0x0010),
+        &rec(0x0203, &cat(&[&cell(1, 2, 0), &1.0f64.to_le_bytes()])),
+        &obj(1),
+        &txo("Đỗ Anh Hải Sơn:\nKiểm tra lại số tài khoản"),
+        &obj(2),
+        &txo("Ghi chú"),
+        &note(1, 2, 0x0002, 1, "Đỗ Anh Hải Sơn"),
+        &note(4, 0, 0, 2, "Kế toán"),
+        // A Note for an object with no text, and one outside the grid, don't break anything.
+        &note(5, 0, 0, 9, "x"),
+        &note(0xFFFF, 300, 0, 1, "y"),
+        &eof(),
+    ]);
+    let stream = cat(&[&globals(globals(0).len() as u32), &sheet]);
+    let (wb, report) = read_xls(&compound("Workbook", &stream)).unwrap();
+    let comments = &wb.sheets[0].comments;
+    let c2 = &comments[&CellRef::parse("C2").unwrap()];
+    assert_eq!((c2.author.as_str(), c2.text.as_str(), c2.visible), ("Đỗ Anh Hải Sơn", "Đỗ Anh Hải Sơn:\nKiểm tra lại số tài khoản", true));
+    let a5 = &comments[&CellRef::parse("A5").unwrap()];
+    assert_eq!((a5.author.as_str(), a5.text.as_str(), a5.visible), ("Kế toán", "Ghi chú", false));
+    assert_eq!(comments[&CellRef::parse("A6").unwrap()].text, "", "no text object: an empty comment");
+    assert_eq!(comments.len(), 3);
+    assert!(!report.warnings.iter().any(|w| w.contains("comments in .xls")), "{:?}", report.warnings);
+}

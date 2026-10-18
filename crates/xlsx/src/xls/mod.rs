@@ -6,12 +6,13 @@
 //! shared and array formulas), cell formatting (fonts, fills, borders, alignment, number formats,
 //! protection; see `styles`), the 1904 date system, merged cells, column widths, row heights,
 //! defined names, print areas, print titles and the calculation settings (mode, iteration,
-//! precision as displayed). Everything else (charts, pictures, comments, conditional formats,
-//! validation, macros) is skipped with a warning.
+//! precision as displayed) and cell comments (see `notes`). Everything else (charts, pictures,
+//! conditional formats, validation, macros) is skipped with a warning.
 //! Encrypted workbooks and pre-BIFF8 versions are refused.
 
 mod formula;
 mod ftab;
+mod notes;
 mod records;
 mod styles;
 
@@ -19,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
-use gridcraft_model::{CalcMode, CalcSettings, Cell, DefinedName, Formula, LineInfo, Sheet, StyleId, StyleTable, Visibility, Workbook};
+use gridcraft_model::{CalcMode, CalcSettings, Cell, Comment, DefinedName, Formula, LineInfo, Sheet, StyleId, StyleTable, Visibility, Workbook};
 
 use crate::cfb::Compound;
 use crate::tables::{builtin_format, col_width_to_px, pt_to_px};
@@ -203,7 +204,7 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
     // The overview comes first.
     report.warnings.insert(
         0,
-        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, cell formatting (fonts, fills, borders, alignment, number formats), merged cells, column widths, row heights and defined names were read. Charts, pictures, comments and conditional formatting are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
+        "Imported from an Excel 97-2003 (.xls) workbook: values, formulas, cell formatting (fonts, fills, borders, alignment, number formats), merged cells, column widths, row heights, defined names and comments were read. Charts, pictures and conditional formatting are not imported yet. Save as .xlsx; saving .xls is not supported.".into(),
     );
     Ok((wb, report))
 }
@@ -424,6 +425,12 @@ struct SheetState<'g> {
     dropped: usize,
     unsupported: Vec<&'static str>,
     calc: CalcSettings,
+    /// The comment object the last Obj record described, waiting for its TxO.
+    note_object: Option<u16>,
+    /// Comment texts by object id.
+    note_texts: HashMap<u16, String>,
+    /// Note records: the cell, its comment object, the author and whether it shows.
+    notes: Vec<(CellRef, u16, String, bool)>,
 }
 
 impl SheetState<'_> {
@@ -515,6 +522,9 @@ fn worksheet(
         dropped: 0,
         unsupported: vec![],
         calc: CalcSettings::default(),
+        note_object: None,
+        note_texts: HashMap::new(),
+        notes: vec![],
     };
     let mut depth = 1usize;
     while let Some(rec) = recs.next_record()? {
@@ -560,6 +570,11 @@ fn worksheet(
             let style = st.sheet.style_id(p.pos);
             st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style });
         }
+    }
+    // Comments: a Note names its text's object, whose TxO came earlier in the substream.
+    for (cell, object, author, visible) in std::mem::take(&mut st.notes) {
+        let text = st.note_texts.get(&object).cloned().unwrap_or_default();
+        st.sheet.comments.insert(cell, Comment { author, text, replies: vec![], threaded: false, resolved: false, visible, dates: vec![] });
     }
     if st.dropped > 0 {
         report.warn(format!("{} cells outside the grid were skipped.", st.dropped));
@@ -748,7 +763,34 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
                 st.sheet.default_row_height = pt_to_px(f64::from(height) / 20.0);
             }
         }
-        0x001C => report.warn("Cell comments in .xls files are not imported yet."),
+        // Obj: a comment's drawing object (FtCmo first: ft 0x15, cb, object type, id).
+        0x005D => {
+            let ft = c.u16()?;
+            c.u16()?;
+            let ot = c.u16()?;
+            let id = c.u16()?;
+            st.note_object = (ft == 0x15 && ot == notes::OT_NOTE).then_some(id);
+        }
+        // TxO: the text of the comment object just described.
+        0x01B6 => {
+            if let Some(id) = st.note_object.take() {
+                c.skip(10)?;
+                let cch = usize::from(c.u16()?);
+                let text = notes::txo_text(&rec.parts, cch);
+                budget.text(text.len())?;
+                st.note_texts.insert(id, text);
+            }
+        }
+        // Note: the cell, flags (0x0002: shown), the object id and the author.
+        0x001C => {
+            let (row, col, flags, object) = (c.u16()?, c.u16()?, c.u16()?, c.u16()?);
+            let author = c.string().unwrap_or_default();
+            if let Some(cell) = st.pos(row, col)
+                && st.notes.len() < MAX_CELLS
+            {
+                st.notes.push((cell, object, author, flags & 0x0002 != 0));
+            }
+        }
         0x00EC => report.warn("Pictures, charts and shapes in .xls files are not imported yet."),
         0x01B0 | 0x0879 => report.warn("Conditional formatting in .xls files is not imported yet."),
         0x01B2 => report.warn("Data validation in .xls files is not imported yet."),
