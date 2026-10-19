@@ -147,6 +147,10 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 if __k.clicked() {
                     app.open_dialog("comments", json!({}));
                 }
+                // The assistant pane: Claude or ChatGPT working on the workbook.
+                if icon_button(ui, Icon::Sparkle, t.text_dim, "AI Assistant", vec2(28.0, ch)).clicked() {
+                    app.run_or_alert("ui.claudePane", json!({}));
+                }
                 // Quick light/dark switch (#194); right-click offers System as well. The same
                 // choice lives in File › Display theme and the View tab.
                 let lang = app.ui.language;
@@ -1059,12 +1063,6 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
             ],
         );
     });
-    sep(ui);
-    // Claude: a task pane where Claude works on the open workbook, as Copilot does in Excel.
-    let open = app.grid.pane.as_deref() == Some("claude");
-    if crate::widgets::big_button(ui, Icon::Comment, "Claude", if open { "Hide Claude" } else { "Ask Claude" }, false).clicked() {
-        app.run_or_alert("ui.claudePane", json!({}));
-    }
 }
 
 fn font_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {

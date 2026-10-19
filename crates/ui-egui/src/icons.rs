@@ -86,6 +86,8 @@ pub enum Icon {
     Trace,
     Calc,
     Filter,
+    /// The AI Assistant (Claude or ChatGPT): a four-pointed sparkle.
+    Sparkle,
     SortAsc,
     SortDesc,
     Duplicates,
@@ -539,6 +541,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, c: Color32) {
             g.rect(4.5, 3.0, 7.0, 3.0, Some(light), None);
             for (x, y) in [(5.5, 8.5), (8.0, 8.5), (10.5, 8.5), (5.5, 11.5), (8.0, 11.5), (10.5, 11.5)] {
                 g.circle(x, y, 0.8, Some(c), None);
+            }
+        }
+        Icon::Sparkle => {
+            for (x, y, r) in [(7.0, 9.0, 6.0), (13.0, 3.5, 2.5)] {
+                let w = r * 0.28;
+                g.poly(&[(x, y - r), (x + w, y), (x, y + r), (x - w, y)], c);
+                g.poly(&[(x - r, y), (x, y - w), (x + r, y), (x, y + w)], c);
             }
         }
         Icon::Filter => g.poly(&[(2.0, 3.0), (14.0, 3.0), (9.5, 8.5), (9.5, 13.5), (6.5, 12.0), (6.5, 8.5)], c),
