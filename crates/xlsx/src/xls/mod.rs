@@ -51,6 +51,9 @@ const MAX_RECORDS: usize = 40_000_000;
 const BOF: u16 = 0x0809;
 const EOF: u16 = 0x000A;
 const BIFF8: u16 = 0x0600;
+/// WsBool (MS-XLS 2.4.351): its first byte's `fDialog` bit marks a dialog sheet, whose BOF says worksheet.
+const WSBOOL: u16 = 0x0081;
+const WSBOOL_DIALOG: u8 = 0x10;
 
 pub(crate) fn invalid(msg: impl Into<String>) -> IoError {
     IoError::Format(format!("XLS: {}", msg.into()))
@@ -575,6 +578,7 @@ fn worksheet(
                 continue;
             }
             _ if depth > 1 => continue,
+            WSBOOL if rec.parts.first().and_then(|p| p.first()).is_some_and(|b| b & WSBOOL_DIALOG != 0) => return Ok(None),
             _ => {}
         }
         sheet_record(&rec, &mut st, budget, report)?;
@@ -630,7 +634,7 @@ fn worksheet(
             mode: AnchorMode::MoveAndSize,
         };
         let id = st.sheet.images.len() as u32 + 1;
-        st.sheet.images.push(Image { id, anchor, data, mime: mime.to_string(), alt: String::new() });
+        st.sheet.images.push(Image { id, anchor, data: data.into(), mime: mime.to_string(), alt: String::new() });
     }
     if skipped_pictures > 0 {
         report.warn("Some pictures in .xls files are in a format GridCraft doesn't show yet (metafiles, bitmaps) and were skipped.");
@@ -638,7 +642,7 @@ fn worksheet(
     // Comments: a Note names its text's object, whose TxO came earlier in the substream.
     for (cell, object, author, visible) in std::mem::take(&mut st.notes) {
         let text = st.note_texts.get(&object).cloned().unwrap_or_default();
-        st.sheet.comments.insert(cell, Comment { author, text, replies: vec![], threaded: false, resolved: false, visible, dates: vec![] });
+        st.sheet.comments.insert(cell, Comment { author, text, replies: vec![], threaded: false, resolved: false, visible, dates: vec![], note_box: None });
     }
     if st.dropped > 0 {
         report.warn(format!("{} cells outside the grid were skipped.", st.dropped));
@@ -648,6 +652,9 @@ fn worksheet(
     }
     Ok(Some((st.sheet, st.calc, st.filtered)))
 }
+
+/// The shortest WINDOW2 a file holds (the chart-sheet form); a shorter one is truncated.
+const WINDOW2_MIN_LEN: usize = 10;
 
 fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, report: &mut ReadReport) -> Result<(), IoError> {
     let mut c = Cursor::new(&rec.parts);
@@ -892,6 +899,16 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
             }
         }
         0x0879 => report.warn("Some newer conditional formats (Excel 2007 data bars, colour scales, icon sets) in .xls files are not imported yet."),
+        0x023E => {
+            let flags = if c.remaining() >= WINDOW2_MIN_LEN { c.u16().ok() } else { None };
+            let Some(flags) = flags else { return Ok(()) };
+            let on = |bit: u16| flags & bit != 0;
+            st.sheet.show_formulas = on(0x0001);
+            st.sheet.show_gridlines = on(0x0002);
+            st.sheet.show_headings = on(0x0004);
+            st.sheet.show_zeros = on(0x0010);
+            st.sheet.right_to_left = on(0x0040);
+        }
         0x01B2 => report.warn("Data validation in .xls files is not imported yet."),
         0x01B8 => report.warn("Hyperlinks in .xls files are not imported yet."),
         0x00B0 => report.warn("PivotTables in .xls files are not imported yet; their values were kept."),

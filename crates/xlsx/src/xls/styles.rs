@@ -197,6 +197,7 @@ pub(super) fn style(x: &Xf, fonts: &[XlsFont], palette: &[u32; 64], num_fmt: &st
             2 => VertAlign::Subscript,
             _ => VertAlign::Baseline,
         },
+        ..Font::default()
     });
     let pattern = pattern(x.pattern);
     let fill = if pattern == PatternType::None { Fill::default() } else { Fill { pattern, fg: color(x.fore, palette), bg: color(x.back, palette) } };
@@ -246,5 +247,13 @@ pub(super) fn style(x: &Xf, fonts: &[XlsFont], palette: &[u32; 64], num_fmt: &st
             _ => 0,
         },
     };
-    Style { font, fill, borders, align, num_fmt: NumFmt::new(num_fmt), protection: Protection { locked: x.locked, hidden: x.hidden } }
+    Style {
+        font,
+        fill,
+        borders,
+        align,
+        num_fmt: NumFmt::new(num_fmt),
+        protection: Protection { locked: x.locked, hidden: x.hidden },
+        ..Style::default()
+    }
 }
