@@ -19,7 +19,7 @@ mod notes;
 mod records;
 mod styles;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
@@ -69,6 +69,14 @@ pub(crate) fn is_xls(bytes: &[u8]) -> bool {
     let Ok(cf) = Compound::open(bytes) else { return false };
     cf.has_root_stream("Workbook") || cf.has_root_stream("Book")
 }
+
+/// Most shared formulas one sheet expands, and the longest template text one attach may
+/// produce: a template shared by its followers was costing every one of them a full decode and
+/// print however often that could never succeed, so each anchor is tried once and failed ones
+/// are skipped for the rest of the sheet. Beyond the cap the remaining references keep their
+/// cached values.
+const MAX_SHARED_ATTACHES: usize = 262_144;
+const MAX_SHARED_TEMPLATE: usize = 8192;
 
 pub(crate) struct Budget {
     cells: usize,
@@ -216,7 +224,7 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
     }
     wb.calc.precision_as_displayed = g.precision_as_displayed;
     defined_names(&g, &model_index, &filtered, &mut wb, &mut report);
-    wb.active_sheet = wb.sheets.iter().position(|s| s.visibility == Visibility::Visible).unwrap_or(0);
+    wb.set_active_sheet(wb.sheets.iter().position(|s| s.visibility == Visibility::Visible).unwrap_or(0));
     // The overview comes first.
     report.warnings.insert(
         0,
@@ -524,6 +532,56 @@ fn rk(v: u32) -> Value {
     Value::number(if v & 1 != 0 { n / 100.0 } else { n })
 }
 
+/// Attaches every pending formula to its anchor's template, returning how many shared
+/// templates were expanded. An anchor whose template can't be imported is refused once:
+/// its followers re-decode the same template for nothing, so they are skipped instead (they
+/// keep their cached values).
+fn resolve_pending(
+    st: &mut SheetState<'_>,
+    arrays: &HashMap<CellRef, (RangeRef, Parsed)>,
+    shared: &HashMap<CellRef, Parsed>,
+    pending: &[Pending],
+) -> usize {
+    let mut failed: HashSet<CellRef> = HashSet::new();
+    let mut shared_attaches = 0usize;
+    for p in pending {
+        if let Some((range, f)) = arrays.get(&p.anchor) {
+            if p.pos == p.anchor {
+                st.attach(p.pos, f, Mode::Cell, Some(*range));
+            }
+        } else if let Some(f) = shared.get(&p.anchor) {
+            if failed.contains(&p.anchor) || shared_attaches >= MAX_SHARED_ATTACHES {
+                continue;
+            }
+            shared_attaches += 1;
+            st.attach(p.pos, f, Mode::Shared, None);
+            let imported = st.sheet.cell(p.pos).and_then(|c| c.formula.as_ref()).is_some_and(|f| f.text.chars().count() <= MAX_SHARED_TEMPLATE);
+            if !imported {
+                failed.insert(p.anchor);
+            }
+        } else {
+            st.unsupported("a shared formula that is missing from the file");
+        }
+    }
+    if shared_attaches >= MAX_SHARED_ATTACHES {
+        st.unsupported("more shared formulas than the expansion cap; some formulas kept their values");
+    }
+    shared_attaches
+}
+
+/// The other cells of a legacy array formula hold only cached results: dropped, as when an
+/// .xlsx is read, so that the formula fills its range on recalculation. If the formula itself
+/// couldn't be imported, they keep their values.
+fn blank_array_followers(st: &mut SheetState<'_>, pending: &[Pending]) {
+    for p in pending {
+        let filled = st.sheet.cell(p.anchor).and_then(|c| c.formula.as_ref()).and_then(|f| f.array).is_some_and(|r| r.contains(p.pos));
+        if p.pos != p.anchor && filled {
+            let style = st.sheet.style_id(p.pos);
+            st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style });
+        }
+    }
+}
+
 fn worksheet(
     stream: &[u8],
     bs: &BoundSheet,
@@ -586,27 +644,8 @@ fn worksheet(
     // Shared and array formulas: their definitions follow the first cell that uses them.
     let (arrays, shared) = (std::mem::take(&mut st.arrays), std::mem::take(&mut st.shared));
     let pending = std::mem::take(&mut st.pending);
-    for p in &pending {
-        if let Some((range, f)) = arrays.get(&p.anchor) {
-            if p.pos == p.anchor {
-                st.attach(p.pos, f, Mode::Cell, Some(*range));
-            }
-        } else if let Some(f) = shared.get(&p.anchor) {
-            st.attach(p.pos, f, Mode::Shared, None);
-        } else {
-            st.unsupported("a shared formula that is missing from the file");
-        }
-    }
-    // The other cells of a legacy array formula hold only cached results: dropped, as when an
-    // .xlsx is read, so that the formula fills its range on recalculation. If the formula itself
-    // couldn't be imported, they keep their values.
-    for p in &pending {
-        let filled = st.sheet.cell(p.anchor).and_then(|c| c.formula.as_ref()).and_then(|f| f.array).is_some_and(|r| r.contains(p.pos));
-        if p.pos != p.anchor && filled {
-            let style = st.sheet.style_id(p.pos);
-            st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style });
-        }
-    }
+    resolve_pending(&mut st, &arrays, &shared, &pending);
+    blank_array_followers(&mut st, &pending);
     // Pictures: shapes that name a stored picture, placed by their cell anchors.
     let mut skipped_pictures = 0usize;
     for shape in drawing::picture_shapes(&std::mem::take(&mut st.drawing)) {
@@ -655,6 +694,47 @@ fn worksheet(
 
 /// The shortest WINDOW2 a file holds (the chart-sheet form); a shorter one is truncated.
 const WINDOW2_MIN_LEN: usize = 10;
+
+/// The drawing-layer records of a sheet: comment objects (Obj, TxO, Note) and the drawing
+/// stream (MsoDrawing) that places pictures.
+fn object_record(rec: &Record<'_>, c: &mut Cursor<'_, '_>, st: &mut SheetState<'_>, budget: &mut Budget, report: &mut ReadReport) -> Result<(), IoError> {
+    match rec.id {
+        // Obj: a comment's drawing object (FtCmo first: ft 0x15, cb, object type, id).
+        0x005D => {
+            let ft = c.u16()?;
+            c.u16()?;
+            let ot = c.u16()?;
+            let id = c.u16()?;
+            st.note_object = (ft == 0x15 && ot == notes::OT_NOTE).then_some(id);
+            if ft == 0x15 && ot == 5 {
+                report.warn("Charts in .xls files are not imported yet.");
+            }
+        }
+        // TxO: the text of the comment object just described.
+        0x01B6 => {
+            if let Some(id) = st.note_object.take() {
+                c.skip(10)?;
+                let cch = usize::from(c.u16()?);
+                let text = notes::txo_text(&rec.parts, cch);
+                budget.text(text.len())?;
+                st.note_texts.insert(id, text);
+            }
+        }
+        // Note: the cell, flags (0x0002: shown), the object id and the author.
+        0x001C => {
+            let (row, col, flags, object) = (c.u16()?, c.u16()?, c.u16()?, c.u16()?);
+            let author = c.string().unwrap_or_default();
+            if let Some(cell) = st.pos(row, col)
+                && st.notes.len() < MAX_CELLS
+            {
+                st.notes.push((cell, object, author, flags & 0x0002 != 0));
+            }
+        }
+        0x00EC if st.drawing.len() < MAX_DRAWING => st.drawing.extend(c.rest()),
+        _ => {}
+    }
+    Ok(())
+}
 
 fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, report: &mut ReadReport) -> Result<(), IoError> {
     let mut c = Cursor::new(&rec.parts);
@@ -834,43 +914,8 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
                 st.sheet.default_row_height = pt_to_px(f64::from(height) / 20.0);
             }
         }
-        // Obj: a comment's drawing object (FtCmo first: ft 0x15, cb, object type, id).
-        0x005D => {
-            let ft = c.u16()?;
-            c.u16()?;
-            let ot = c.u16()?;
-            let id = c.u16()?;
-            st.note_object = (ft == 0x15 && ot == notes::OT_NOTE).then_some(id);
-            if ft == 0x15 && ot == 5 {
-                report.warn("Charts in .xls files are not imported yet.");
-            }
-        }
-        // TxO: the text of the comment object just described.
-        0x01B6 => {
-            if let Some(id) = st.note_object.take() {
-                c.skip(10)?;
-                let cch = usize::from(c.u16()?);
-                let text = notes::txo_text(&rec.parts, cch);
-                budget.text(text.len())?;
-                st.note_texts.insert(id, text);
-            }
-        }
-        // Note: the cell, flags (0x0002: shown), the object id and the author.
-        0x001C => {
-            let (row, col, flags, object) = (c.u16()?, c.u16()?, c.u16()?, c.u16()?);
-            let author = c.string().unwrap_or_default();
-            if let Some(cell) = st.pos(row, col)
-                && st.notes.len() < MAX_CELLS
-            {
-                st.notes.push((cell, object, author, flags & 0x0002 != 0));
-            }
-        }
+        0x005D | 0x01B6 | 0x001C | 0x00EC => object_record(rec, &mut c, st, budget, report)?,
         0x009D => st.filtered = true,
-        0x00EC => {
-            if st.drawing.len() < MAX_DRAWING {
-                st.drawing.extend(c.rest());
-            }
-        }
         0x01B0 => st.cf_ranges = cond::condfmt(&mut c)?,
         0x01B1 => {
             let g = st.g;

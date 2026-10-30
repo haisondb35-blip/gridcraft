@@ -20,6 +20,12 @@ use crate::i18n::{self, Language};
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
+mod options;
+mod print;
+
+use options::{options, platform};
+use print::print;
+
 /// Width of the navigation column.
 const NAV_W: f32 = 196.0;
 /// Width of the content column (pages are left-aligned like a document, not stretched).
@@ -111,7 +117,7 @@ pub struct Backstage {
     props: [String; 7],
     /// Info: Show All Properties is open.
     all_props: bool,
-    /// Options: the pane shown (an id from [`OPTION_PANES`]).
+    /// Options: the pane shown (an id from [`options::OPTION_PANES`]).
     pub options_pane: &'static str,
     /// Options › General: the user name while it is edited.
     user_name: String,
@@ -268,9 +274,10 @@ fn save(app: &mut SheetApp, out: &mut Outcome) {
 
 // ---------------------------------------------------------------- navigation
 
+/// Allocates and paints one Backstage navigation row: selected or hover fill, icon, label and button semantics. Returns the row's click response.
 fn nav_item(ui: &mut Ui, icon: Icon, label: &str, selected: bool, text: Color32, sel: Color32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, 38.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let p = ui.painter();
     if selected {
         p.rect_filled(rect, 0.0, sel);
@@ -307,7 +314,7 @@ fn dim(ui: &mut Ui, text: &str) {
 fn tile(ui: &mut Ui, label: &str, sample: Option<usize>) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(150.0, 140.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     let p = ui.painter();
     let thumb = Rect::from_min_size(rect.min, vec2(rect.width(), 104.0));
     p.rect_filled(thumb, 4.0, t.grid_bg);
@@ -362,8 +369,8 @@ fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
 /// File name and folder of a recent path, split as text.
 fn split_path(path: &str) -> (String, String) {
     let p = std::path::Path::new(path);
-    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or(path).to_string();
-    let folder = p.parent().and_then(|f| f.to_str()).unwrap_or("").to_string();
+    let name = p.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path).to_string();
+    let folder = p.parent().and_then(std::path::Path::to_str).unwrap_or("").to_string();
     (name, folder)
 }
 
@@ -398,7 +405,7 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
     for path in app.ui.recent.iter().take(limit).cloned().collect::<Vec<_>>() {
         let (name, folder) = split_path(&path);
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
         let p = ui.painter();
         if resp.hovered() {
             p.rect_filled(rect, 4.0, t.hover);
@@ -524,7 +531,7 @@ fn action_row(ui: &mut Ui, icon: Icon, title: &str, detail: &str) -> egui::Respo
     let t = Tokens::get(ui.ctx());
     let width = ui.available_width().min(CONTENT_W);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 56.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
     let p = ui.painter();
     if resp.hovered() {
         p.rect_filled(rect, 4.0, t.hover);
@@ -539,7 +546,7 @@ fn action_row(ui: &mut Ui, icon: Icon, title: &str, detail: &str) -> egui::Respo
 fn square_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(96.0, 88.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     let p = ui.painter();
     p.rect_filled(rect, 6.0, if resp.hovered() { t.hover } else { t.ribbon });
     p.rect_stroke(rect, 6.0, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.ribbon_border }), StrokeKind::Inside);
@@ -808,6 +815,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     }
 }
 
+/// Draws the Save As type picker and action: xlsx opens the `saveAs` dialog, other types export, and the page closes when the save/export succeeds (or a web download handles it).
 fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let lang = app.ui.language;
     dim(ui, lang.tr("Save the workbook under another name or in another folder."));
@@ -815,14 +823,19 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     let fmt = bs.save_format;
     let current = SAVE_TYPES.iter().find(|(ext, _)| *ext == fmt).map_or("Excel Workbook (*.xlsx)", |(_, label)| *label);
     ui.horizontal(|ui| {
-        ui.label(lang.tr("Save as type"));
-        egui::ComboBox::from_id_salt("backstage_save_type").width(280.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
-            for (ext, label) in SAVE_TYPES {
-                if ui.selectable_label(fmt == ext, lang.tr(label)).clicked() {
-                    bs.save_format = ext;
+        let label = ui.label(lang.tr("Save as type"));
+        craft_ui::ComboBox::from_id_salt("backstage_save_type")
+            .width(280.0)
+            .selected_text(lang.tr(current))
+            .show_ui(ui, |ui| {
+                for (ext, label) in SAVE_TYPES {
+                    if ui.selectable_label(fmt == ext, lang.tr(label)).clicked() {
+                        bs.save_format = ext;
+                    }
                 }
-            }
-        });
+            })
+            .response
+            .labelled_by(label.id);
     });
     ui.add_space(14.0);
     // Desktop: the system Save dialog. Web: the file downloads.
@@ -842,166 +855,6 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     }
     ui.add_space(18.0);
     dim(ui, lang.tr("A CSV file, web page or PDF is a copy: the workbook keeps its own file."));
-}
-
-fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
-    let t = Tokens::get(ui.ctx());
-    let lang = app.ui.language;
-    let Some((uid, revision)) = app.session.active().map(|d| (d.uid, d.revision)) else {
-        dim(ui, lang.tr("No workbook is open."));
-        return;
-    };
-    let mut params = json!({"sheets": if bs.print_all { "all" } else { "active" }});
-    if bs.fit_to_page {
-        params["fitToPage"] = json!(true);
-    }
-    let key = (uid, revision, bs.print_all, bs.fit_to_page);
-    if bs.preview.as_ref().is_none_or(|(k, _)| *k != key) {
-        let preview = app.session.run("file.printPreview", params.clone()).unwrap_or(Json::Null);
-        bs.preview = Some((key, preview));
-    }
-    let pages: Vec<Json> = bs.preview.as_ref().and_then(|(_, p)| p.get("pageList")).and_then(Json::as_array).cloned().unwrap_or_default();
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(250.0);
-            if let Some(discover) = &app.services.printers {
-                crate::printing::show(&mut app.printing, ui, discover, |label| lang.tr(label).to_owned());
-            }
-            let can_print = app.services.print_native.is_none() || app.printing.ready();
-            if ui.add_enabled_ui(can_print, |ui| square_button(ui, Icon::Print, lang.tr("Print"))).inner.clicked()
-                && app.commit_edit(0, 0, false, false)
-            {
-                app.print_now(params.clone());
-                out.close = app.services.print_native.is_none();
-            }
-            ui.add_space(16.0);
-            let scope = if bs.print_all { "Print Entire Workbook" } else { "Print Active Sheets" };
-            egui::ComboBox::from_id_salt("backstage_print_scope").width(230.0).selected_text(lang.tr(scope)).show_ui(ui, |ui| {
-                for (all, label) in [(false, "Print Active Sheets"), (true, "Print Entire Workbook")] {
-                    if ui.selectable_label(bs.print_all == all, lang.tr(label)).clicked() {
-                        bs.print_all = all;
-                        bs.preview_page = 0;
-                    }
-                }
-            });
-            ui.add_space(8.0);
-            if ui.checkbox(&mut bs.fit_to_page, lang.tr("Fit Sheet on One Page")).changed() {
-                bs.preview_page = 0;
-            }
-            ui.add_space(8.0);
-            if ui.link(lang.tr("Page Setup…")).clicked() {
-                app.open_dialog("pageSetup", json!({}));
-            }
-        });
-        ui.add_space(24.0);
-        ui.vertical(|ui| {
-            if pages.is_empty() {
-                dim(ui, lang.tr("Nothing to print."));
-                return;
-            }
-            let last = pages.len().saturating_sub(1);
-            bs.preview_page = bs.preview_page.min(last);
-            let Some(page) = pages.get(bs.preview_page) else { return };
-            // Paper proportions from the preview (points); hostile sizes fall back to Letter.
-            let w = page.get("width").and_then(Json::as_f64).filter(|w| w.is_finite() && *w > 1.0).unwrap_or(612.0) as f32;
-            let h = page.get("height").and_then(Json::as_f64).filter(|h| h.is_finite() && *h > 1.0).unwrap_or(792.0) as f32;
-            let scale = (520.0 / h).min(440.0 / w);
-            let (rect, _) = ui.allocate_exact_size(vec2(w * scale, h * scale), Sense::hover());
-            let p = ui.painter();
-            p.rect_filled(rect.translate(vec2(2.0, 3.0)), 2.0, t.shadow);
-            p.rect_filled(rect, 2.0, t.grid_bg);
-            p.rect_stroke(rect, 2.0, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
-            if let Some(d) = app.session.active() {
-                paint_page(p, rect, w, page, &d.wb, &t);
-            }
-            let sheet = page.get("sheet").and_then(Json::as_str).unwrap_or("");
-            let range = page.get("range").and_then(Json::as_str).unwrap_or("");
-            ui.add_space(4.0);
-            dim(ui, &format!("{sheet} · {range}"));
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.add_enabled(bs.preview_page > 0, egui::Button::new("◀")).on_hover_text(lang.tr("Previous page")).clicked() {
-                    bs.preview_page = bs.preview_page.saturating_sub(1);
-                }
-                let text = lang
-                    .tr("Page {page} of {pages}")
-                    .replace("{page}", &(bs.preview_page + 1).to_string())
-                    .replace("{pages}", &pages.len().to_string());
-                ui.label(text);
-                if ui.add_enabled(bs.preview_page < last, egui::Button::new("▶")).on_hover_text(lang.tr("Next page")).clicked() {
-                    bs.preview_page = (bs.preview_page + 1).min(last);
-                }
-            });
-        });
-    });
-}
-
-/// Most rows and columns one preview page draws (a page holds far fewer at any readable scale).
-const PREVIEW_ROWS: u32 = 200;
-const PREVIEW_COLS: u32 = 60;
-
-/// Draws one printed page in miniature: the cells' displayed text at the page's print scale,
-/// inside the sheet's margins. `paper_w` is the page width in points.
-fn paint_page(p: &egui::Painter, rect: Rect, paper_w: f32, page: &Json, wb: &gridcraft_engine::model::Workbook, t: &Tokens) {
-    let Some(range) = page.get("range").and_then(Json::as_str).and_then(gridcraft_engine::core::RangeRef::parse) else { return };
-    let Some(sh) = page.get("sheet").and_then(Json::as_str).and_then(|n| wb.sheet_index(n)).and_then(|i| wb.sheets.get(i)) else { return };
-    // Preview pixels per point, and per sheet pixel (sheet geometry is 96 dpi: 0.75 pt per pixel).
-    let per_pt = rect.width() / paper_w;
-    let print_scale =
-        page.get("scale").and_then(Json::as_f64).filter(|s| s.is_finite() && *s > 0.0).map_or(1.0, |s| (s / 100.0) as f32).clamp(0.1, 4.0);
-    let per_px = per_pt * 0.75 * print_scale;
-    let margin =
-        |i: usize, default: f32| sh.print.margins.get(i).copied().filter(|m| m.is_finite()).unwrap_or(default).clamp(0.0, 3.0) * 72.0 * per_pt;
-    let body = Rect::from_min_max(
-        pos2(rect.left() + margin(0, 0.7), rect.top() + margin(2, 0.75)),
-        pos2(rect.right() - margin(1, 0.7), rect.bottom() - margin(3, 0.75)),
-    );
-    if !body.is_positive() {
-        return;
-    }
-    let font = theme::ui_font((11.0 * per_pt * print_scale).clamp(3.0, 14.0));
-    let last_row = range.end.row.min(range.start.row.saturating_add(PREVIEW_ROWS));
-    let last_col = range.end.col.min(range.start.col.saturating_add(PREVIEW_COLS));
-    let mut y = body.top();
-    for row in range.start.row..=last_row {
-        let h = sh.row_height(row) * per_px;
-        if h <= 0.0 {
-            continue;
-        }
-        if y >= body.bottom() {
-            break;
-        }
-        let mut x = body.left();
-        for col in range.start.col..=last_col {
-            let w = sh.col_width(col) * per_px;
-            if w <= 0.0 {
-                continue;
-            }
-            if x >= body.right() {
-                break;
-            }
-            let cell = gridcraft_engine::core::CellRef::new(row, col);
-            let text = gridcraft_engine::display::cell_text(wb, sh, cell);
-            if !text.is_empty() {
-                let numeric = sh.value(cell).as_f64().is_some();
-                // Text runs on over empty neighbours, as on the sheet; numbers stay in their cell.
-                let mut span = w;
-                if !numeric {
-                    let mut next = col.saturating_add(1);
-                    while next <= last_col && x + span < body.right() && sh.value(gridcraft_engine::core::CellRef::new(row, next)).is_empty() {
-                        span += sh.col_width(next) * per_px;
-                        next = next.saturating_add(1);
-                    }
-                }
-                let clip = Rect::from_min_size(pos2(x, y), vec2(span, h)).intersect(body);
-                let (anchor, at) =
-                    if numeric { (Align2::RIGHT_CENTER, pos2(x + w - 1.0, y + h / 2.0)) } else { (Align2::LEFT_CENTER, pos2(x + 1.0, y + h / 2.0)) };
-                p.with_clip_rect(clip).text(at, anchor, text, font.clone(), t.cell_text);
-            }
-            x += w;
-        }
-        y += h;
-    }
 }
 
 fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
@@ -1036,7 +889,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
         _ => return false,
     };
     let title = app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
-    let stem = std::path::Path::new(&title).file_stem().and_then(|s| s.to_str()).unwrap_or("Book1").to_string();
+    let stem = std::path::Path::new(&title).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
     if let Some(pick) = &app.services.pick_save {
         let Some(path) = pick(&format!("{stem}.{fmt}")) else { return false };
         // The picker may suggest a workbook extension; the export writes the chosen format.
@@ -1081,272 +934,6 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
             false
         }
     }
-}
-
-/// File › Options panes, in order (Excel's list, with the ones GridCraft has settings for).
-pub const OPTION_PANES: [(&str, &str); 7] = [
-    ("general", "Options|General"),
-    ("formulas", "Formulas"),
-    ("proofing", "Proofing"),
-    ("save", "Options|Save"),
-    ("language", "Language"),
-    ("advanced", "Advanced"),
-    ("agents", "Agents"),
-];
-
-/// File › Options: the panes on the left, the chosen pane's settings on the right, as in Excel
-/// and WordCraft. Every setting goes through a command (`view.*`, `options.*`, `formulas.*`).
-fn options(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
-    let t = Tokens::get(ui.ctx());
-    let lang = app.ui.language;
-    let current = OPTION_PANES.iter().find(|p| p.0 == bs.options_pane).map_or("general", |p| p.0);
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(180.0);
-            for (id, label) in OPTION_PANES {
-                let text = lang.tr(label);
-                let active = current == id;
-                let (r, resp) = ui.allocate_exact_size(vec2(180.0, 32.0), Sense::click());
-                resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, text));
-                if active {
-                    ui.painter().rect_filled(r, 4.0, t.hover);
-                    ui.painter().rect_filled(egui::Rect::from_min_size(r.min, vec2(3.0, r.height())), 1.5, t.accent);
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(r, 4.0, t.hover);
-                }
-                let font = if active { theme::ui_bold(14.0) } else { theme::ui_font(14.0) };
-                ui.painter().text(egui::pos2(r.min.x + 14.0, r.center().y), egui::Align2::LEFT_CENTER, text, font, t.text);
-                if resp.clicked() {
-                    bs.options_pane = id;
-                }
-            }
-        });
-        ui.add_space(12.0);
-        let (line, _) = ui.allocate_exact_size(vec2(1.0, 460.0), Sense::hover());
-        ui.painter().rect_filled(line, 0.0, t.separator);
-        ui.add_space(22.0);
-        ui.vertical(|ui| {
-            ui.set_max_width(680.0);
-            match current {
-                "formulas" => options_formulas(app, ui),
-                "proofing" => options_proofing(app, ui),
-                "save" => options_save(app, ui),
-                "language" => options_language(app, ui),
-                "advanced" => options_advanced(app, ui),
-                "agents" => {
-                    section(ui, lang, "Agents");
-                    ui.label(lang.tr("Every command is available to scripts and AI agents: run `gridcraft-cli mcp` for an MCP server, or start the app with `--control <port>` for the JSON control channel."));
-                }
-                _ => options_general(app, ui, bs),
-            }
-        });
-    });
-}
-
-fn hint(ui: &mut Ui, text: &str) {
-    let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(text).font(theme::ui_font(11.5)).color(t.text_dim));
-}
-
-fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
-    let lang = app.ui.language;
-    section(ui, lang, "Interface");
-    egui::Grid::new("options_interface").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
-        ui.label(lang.tr("Display theme"));
-        let mode = app.ui.theme_mode();
-        let current = match mode {
-            "system" => "System",
-            "dark" => "Dark",
-            _ => "Light",
-        };
-        egui::ComboBox::from_id_salt("backstage_theme").width(200.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
-            for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
-                if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
-                    app.run_or_alert("view.theme", json!({"mode": value}));
-                }
-            }
-        });
-        ui.end_row();
-        // Interface size (#230), as in the View tab: the ribbon, its buttons, menus and dialogs
-        // grow together, on top of the desktop's scale.
-        ui.label(lang.tr("Interface size"));
-        let size = app.ui.interface_scale;
-        let text = |v: u16| if v == 100 { lang.tr("Auto").to_string() } else { format!("{v}%") };
-        egui::ComboBox::from_id_salt("backstage_interface_size").width(200.0).selected_text(text(size)).show_ui(ui, |ui| {
-            for v in [100, 75, 90, 110, 125, 150, 175, 200] {
-                if ui.selectable_label(v == size, text(v)).clicked() {
-                    app.run_or_alert("view.interfaceScale", json!({"percent": v}));
-                }
-            }
-        });
-        ui.end_row();
-    });
-    hint(
-        ui,
-        lang.tr(
-            "Makes the ribbon, its buttons, menus and dialogs larger or smaller, on top of your system's display scaling. Sheet zoom is separate.",
-        ),
-    );
-    ui.add_space(6.0);
-    let mut formula_bar = app.session.prefs.formula_bar;
-    if ui.checkbox(&mut formula_bar, lang.tr("Show formula bar")).changed() {
-        app.run_or_alert("view.formulaBar", json!({"on": formula_bar}));
-    }
-    ui.add_space(16.0);
-    section(ui, lang, "When creating new workbooks");
-    let prefs = app.session.prefs.clone();
-    egui::Grid::new("options_new_workbooks").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
-        ui.label(lang.tr("Use this as the default font"));
-        let fonts = ["Calibri", "Aptos", "Arial", "Times New Roman", "Cambria", "Tahoma", "Segoe UI", "Verdana"];
-        egui::ComboBox::from_id_salt("options_default_font").width(200.0).selected_text(&prefs.default_font).show_ui(ui, |ui| {
-            for f in fonts {
-                if ui.selectable_label(prefs.default_font == f, f).clicked() {
-                    app.run_or_alert("options.set", json!({"defaultFont": f}));
-                }
-            }
-        });
-        ui.end_row();
-        ui.label(lang.tr("Font size"));
-        let mut size = prefs.default_font_size;
-        if ui.add(egui::DragValue::new(&mut size).range(1.0..=409.0).speed(0.5)).changed() {
-            app.run_or_alert("options.set", json!({"defaultFontSize": size}));
-        }
-        ui.end_row();
-        ui.label(lang.tr("Include this many sheets"));
-        let mut sheets = prefs.sheets_in_new_workbook;
-        if ui.add(egui::DragValue::new(&mut sheets).range(1..=255)).changed() {
-            app.run_or_alert("options.set", json!({"sheetsInNewWorkbook": sheets}));
-        }
-        ui.end_row();
-    });
-    ui.add_space(16.0);
-    section(ui, lang, "Personalize");
-    ui.horizontal(|ui| {
-        ui.label(lang.tr("User name"));
-        let id = ui.make_persistent_id("options_user_name");
-        if !ui.ctx().memory(|m| m.has_focus(id)) {
-            bs.user_name.clone_from(&prefs.user_name);
-        }
-        let resp = ui.add(egui::TextEdit::singleline(&mut bs.user_name).id(id).desired_width(260.0));
-        if resp.lost_focus() && bs.user_name.trim() != prefs.user_name && !bs.user_name.trim().is_empty() {
-            app.run_or_alert("options.set", json!({"userName": bs.user_name.trim()}));
-        }
-    });
-    hint(ui, lang.tr("New comments and the workbook's Last Modified By are recorded under this name."));
-}
-
-fn options_formulas(app: &mut SheetApp, ui: &mut Ui) {
-    let lang = app.ui.language;
-    section(ui, lang, "Calculation options");
-    let Some(calc) = app.session.active().map(|d| d.wb.calc.clone()) else {
-        dim(ui, lang.tr("Open a workbook to change how it calculates."));
-        return;
-    };
-    ui.label(lang.tr("Workbook calculation"));
-    use gridcraft_engine::model::CalcMode;
-    for (mode, id, label) in [
-        (CalcMode::Automatic, "automatic", "Automatic"),
-        (CalcMode::AutomaticExceptTables, "automaticExceptTables", "Automatic Except for Data Tables"),
-        (CalcMode::Manual, "manual", "Manual"),
-    ] {
-        if ui.radio(calc.mode == mode, lang.tr(label)).clicked() && calc.mode != mode {
-            app.run_or_alert("formulas.calculationOptions", json!({"mode": id}));
-        }
-    }
-    ui.add_space(4.0);
-    let mut iterative = calc.iterative;
-    if ui.checkbox(&mut iterative, lang.tr("Enable iterative calculation")).changed() {
-        app.run_or_alert("formulas.calculationOptions", json!({"iterative": iterative}));
-    }
-    ui.add_space(6.0);
-    dim(ui, lang.tr("Calculation settings are saved with the workbook."));
-    ui.add_space(16.0);
-    section(ui, lang, "Working with formulas");
-    let mut autocomplete = app.ui.autocomplete;
-    if ui.checkbox(&mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
-        app.run_or_alert("options.autoComplete", json!({"on": autocomplete}));
-    }
-}
-
-fn options_proofing(app: &mut SheetApp, ui: &mut Ui) {
-    let lang = app.ui.language;
-    section(ui, lang, "When correcting spelling");
-    let n = app.session.prefs.user_dictionary.len();
-    ui.label(format!("{}: {n}", lang.tr("Words added to the custom dictionary")));
-    hint(ui, lang.tr("Review › Spelling checks the sheet; Add to Dictionary keeps a word for every workbook."));
-}
-
-fn options_save(app: &mut SheetApp, ui: &mut Ui) {
-    let lang = app.ui.language;
-    section(ui, lang, "Save workbooks");
-    let mut autosave = app.ui.autosave;
-    if ui.checkbox(&mut autosave, lang.tr("Save .xlsx workbooks automatically after every change")).changed() {
-        app.toggle_autosave();
-    }
-}
-
-fn options_language(app: &mut SheetApp, ui: &mut Ui) {
-    let lang = app.ui.language;
-    section(ui, lang, "Interface language");
-    ui.horizontal(|ui| {
-        ui.label(lang.tr("Interface language"));
-        egui::ComboBox::from_id_salt("backstage_language").width(200.0).selected_text(lang.name()).show_ui(ui, |ui| {
-            for l in i18n::Language::for_picker() {
-                if ui.selectable_label(l == lang, l.name()).clicked() {
-                    app.run_or_alert("app.language.set", json!({"language": l.code()}));
-                }
-            }
-        });
-    });
-}
-
-fn options_advanced(app: &mut SheetApp, ui: &mut Ui) {
-    let lang = app.ui.language;
-    section(ui, lang, "Editing options");
-    let mut autocomplete = app.ui.autocomplete;
-    if ui.checkbox(&mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
-        app.run_or_alert("options.autoComplete", json!({"on": autocomplete}));
-    }
-    ui.add_space(6.0);
-    let dir = app.session.prefs.enter_direction.clone();
-    ui.horizontal(|ui| {
-        ui.label(lang.tr("After pressing Enter, move selection"));
-        let label = |d: &str| match d {
-            "right" => "Right",
-            "up" => "Up",
-            "left" => "Left",
-            "none" => "Don't move",
-            _ => "Down",
-        };
-        egui::ComboBox::from_id_salt("options_enter_direction").width(140.0).selected_text(lang.tr(label(&dir))).show_ui(ui, |ui| {
-            for d in ["down", "right", "up", "left", "none"] {
-                if ui.selectable_label(dir == d, lang.tr(label(d))).clicked() {
-                    app.run_or_alert("options.set", json!({"enterDirection": d}));
-                }
-            }
-        });
-    });
-    ui.add_space(16.0);
-    section(ui, lang, "Display");
-    let mut formula_bar = app.session.prefs.formula_bar;
-    if ui.checkbox(&mut formula_bar, lang.tr("Show formula bar")).changed() {
-        app.run_or_alert("view.formulaBar", json!({"on": formula_bar}));
-    }
-}
-
-/// The platform the app was built for, e.g. "macOS (aarch64)"; the web build reports "Web".
-fn platform() -> String {
-    let os = match std::env::consts::OS {
-        "macos" => "macOS",
-        "windows" => "Windows",
-        "linux" => "Linux",
-        "freebsd" => "FreeBSD",
-        "openbsd" => "OpenBSD",
-        "netbsd" => "NetBSD",
-        _ if cfg!(target_arch = "wasm32") => return "Web".into(),
-        other => other,
-    };
-    format!("{os} ({})", std::env::consts::ARCH)
 }
 
 /// Excel's File › Account: product information and the About window.

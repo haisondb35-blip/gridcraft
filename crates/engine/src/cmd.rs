@@ -19,6 +19,7 @@ pub mod sheet;
 pub mod slicer;
 pub mod solver;
 pub mod spelling;
+pub mod stash;
 pub mod view;
 pub mod whatif;
 
@@ -96,11 +97,18 @@ pub fn has_doc(s: &Session) -> std::result::Result<(), String> {
 }
 pub fn can_undo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
+    not_grouping(s)?;
     if s.active().is_some_and(|d| !d.undo.is_empty()) { Ok(()) } else { Err("nothing to undo".into()) }
 }
 pub fn can_redo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
+    not_grouping(s)?;
     if s.active().is_some_and(|d| !d.redo.is_empty()) { Ok(()) } else { Err("nothing to redo".into()) }
+}
+/// Undo and Redo wait while an undo group is open on the active document (an action that spans
+/// several calls is still running).
+fn not_grouping(s: &Session) -> std::result::Result<(), String> {
+    if s.active().is_some_and(|d| s.in_group(d.uid)) { Err("finish or stop the running action first (automate.stopAction)".into()) } else { Ok(()) }
 }
 pub fn has_clipboard(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
@@ -157,7 +165,7 @@ pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
     test_commands().iter().find(|c| c.id == id).copied()
 }
 
-static TEST_COMMANDS: std::sync::Mutex<Vec<&'static CommandSpec>> = std::sync::Mutex::new(Vec::new());
+static TEST_COMMANDS: std::sync::Mutex<Vec<&CommandSpec>> = std::sync::Mutex::new(Vec::new());
 
 /// Test-only: register an extra command so UI integration tests can prove a pending
 /// keytip becomes live the moment its command lands (see crates/ui-egui/tests/keytips.rs).
@@ -179,8 +187,24 @@ pub fn register_test_command(id: &'static str, run: Run) {
     test_commands().push(spec);
 }
 
+/// Test-only: an undoable command, to exercise how `execute` records its step.
+#[cfg(test)]
+pub(crate) fn register_undoable_test_command(id: &'static str, run: Run) {
+    let spec: &'static CommandSpec = Box::leak(Box::new(CommandSpec {
+        id,
+        label: id,
+        menu: &[],
+        shortcut: None,
+        params: "",
+        enabled: |_| Ok(()),
+        run,
+        journal: false,
+        undoable: true,
+    }));
+    test_commands().push(spec);
+}
+
 fn test_commands() -> std::sync::MutexGuard<'static, Vec<&'static CommandSpec>> {
-    #[allow(clippy::unwrap_used)] // a poisoned test registry has no meaningful recovery
     match TEST_COMMANDS.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -271,7 +295,7 @@ pub(crate) fn target_sheet(s: &Session, p: &Json) -> Result<usize> {
     {
         return d.wb.sheet_index(&sh).ok_or_else(|| bad("range", format!("no sheet named `{sh}`")));
     }
-    Ok(d.wb.active_sheet)
+    Ok(d.wb.active_sheet())
 }
 
 pub(crate) use gridcraft_core::split_sheet;
@@ -280,7 +304,7 @@ pub(crate) use gridcraft_core::split_sheet;
 /// a cell reference, or that names a sheet other than the active one, is an error rather than a
 /// silent fallback to some other cell.
 pub(crate) fn cell_param(s: &Session, p: &Json, key: &str) -> Result<Option<CellRef>> {
-    cell_param_on(s, p, key, s.doc()?.wb.active_sheet)
+    cell_param_on(s, p, key, s.doc()?.wb.active_sheet())
 }
 
 /// Like [`cell_param`], for a command that operates on `sheet` (a `Sheet!` prefix must name it).
@@ -324,11 +348,15 @@ pub(crate) fn edit<R>(s: &mut Session, f: impl FnOnce(&mut Ctx) -> Result<R>) ->
     })
 }
 
+fn wall_clock() -> std::time::Duration {
+    std::time::SystemTime::UNIX_EPOCH.elapsed().unwrap_or_default()
+}
+
 pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>) -> Result<R> {
-    // `GRIDCRAFT_PROFILE` timing. Read the clock only when profiling, and never on wasm: there
-    // `Instant::now` traps (`RuntimeError: unreachable`), which broke every edit in the web app.
-    #[allow(clippy::disallowed_methods)]
-    let t0 = if cfg!(target_arch = "wasm32") { None } else { std::env::var_os("GRIDCRAFT_PROFILE").map(|_| std::time::Instant::now()) };
+    // `GRIDCRAFT_PROFILE` timing, never on wasm where the clock traps. `elapsed` on the epoch
+    // reads the wall clock without the (disallowed) `now`.
+    let t0 = if cfg!(target_arch = "wasm32") { None } else { std::env::var_os("GRIDCRAFT_PROFILE").map(|_| wall_clock()) };
+    let since = |t0: std::time::Duration| wall_clock().saturating_sub(t0);
     let mut sel = d.selection.clone();
     let mut ctx = Ctx { wb: (*d.wb).clone(), changed: Vec::new(), structural: false, sel: &mut sel, fit_rows: Vec::new(), protection_checked: false };
     let r = f(&mut ctx)?;
@@ -343,7 +371,7 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
         fit_rows.extend(changed.iter().map(|(s, c)| (*s, c.row)));
     }
     if let Some(t0) = t0 {
-        eprintln!("commit: edit {:?}, {} changed", t0.elapsed(), changed.len());
+        eprintln!("commit: edit {:?}, {} changed", since(t0), changed.len());
     }
     if structural {
         d.calc.recalc_all(&mut wb);
@@ -351,7 +379,7 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
         d.calc.cells_changed(&mut wb, &changed);
     }
     if let Some(t0) = t0 {
-        eprintln!("commit: + recalc {:?}", t0.elapsed());
+        eprintln!("commit: + recalc {:?}", since(t0));
     }
     fit_rows.sort_unstable();
     fit_rows.dedup();
@@ -359,7 +387,7 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
         auto_row_height(&mut wb, si, row);
     }
     if let Some(t0) = t0 {
-        eprintln!("commit: + rows {:?}", t0.elapsed());
+        eprintln!("commit: + rows {:?}", since(t0));
     }
     d.wb = std::sync::Arc::new(wb);
     d.selection = sel;
@@ -527,9 +555,15 @@ pub fn auto_row_height(wb: &mut Workbook, si: usize, row: u32) {
         return;
     }
     let mut need: f32 = default;
+    // The cell loop must not rescan every merge per cell: the merges touching this row are
+    // picked out once, and per cell the candidates are re-checked (normally none or a couple;
+    // a sheet with many merges and many saved columns would otherwise scan all of them per
+    // cell, rows × merges × columns).
+    let row_merges: Vec<gridcraft_core::RangeRef> =
+        sh.merges.iter().copied().filter(|m| !m.is_single() && m.start.row <= row && row <= m.end.row).collect();
     for (c, cell) in sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1) {
         // Merged cells never auto-fit their rows, like Excel (column autofit skips them too).
-        if sh.merge_at(CellRef::new(row, c)).is_some_and(|m| !m.is_single()) {
+        if row_merges.iter().any(|m| m.contains(CellRef::new(row, c))) {
             continue;
         }
         let st = wb.styles.get(cell.style);
@@ -562,7 +596,7 @@ pub fn auto_row_height(wb: &mut Workbook, si: usize, row: u32) {
 
 impl Ctx<'_> {
     pub fn sheet_index(&self) -> usize {
-        self.wb.active_sheet
+        self.wb.active_sheet()
     }
     pub fn sheet_mut(&mut self, i: usize) -> Result<&mut gridcraft_model::Sheet> {
         self.wb.sheet_mut(i).ok_or_else(|| EngineError::Other("no such sheet".into()))
