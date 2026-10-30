@@ -138,14 +138,13 @@ pub(super) fn insert_shape(s: &mut Session, p: &Json) -> Result<Json> {
     } else {
         Color::Theme(4, -250)
     });
-    let offset = |k: &str| f64_param(p, k).filter(|v| v.is_finite()).map_or(0.0, |v| v.clamp(0.0, 10_000.0) as f32);
     let shape = Shape {
         id,
         kind,
         anchor: Anchor {
             cell: at,
-            dx: offset("dx"),
-            dy: offset("dy"),
+            dx: 0.0,
+            dy: 0.0,
             width: f64_param(p, "width").unwrap_or(144.0) as f32,
             height: f64_param(p, "height").unwrap_or(if kind == ShapeKind::Line { 0.0 } else { 96.0 }) as f32,
             mode: anchor_mode_param(p).unwrap_or_default(),

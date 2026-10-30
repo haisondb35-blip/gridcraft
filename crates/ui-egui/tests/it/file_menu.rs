@@ -449,6 +449,8 @@ fn options_sets_maximum_iterations_and_change_only_while_iteration_is_on() {
     );
     h.run_steps(4);
     h.state_mut().run("file.options", serde_json::json!({})).unwrap();
+    // brian-local: the Options page opens on General; these fields are in its Formulas pane.
+    h.state_mut().backstage.as_mut().unwrap().options_pane = "formulas";
     h.run_steps(3);
     let calc = |h: &egui_kittest::Harness<'static, SheetApp>| h.state().session.active().unwrap().wb.calc.clone();
     // Resolve the field by its accessible name in both the disabled and enabled states.

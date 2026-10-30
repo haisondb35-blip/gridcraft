@@ -49,15 +49,6 @@ pub fn chart_kind(t: &str, sub: &str) -> ChartKind {
 
 /// Builds series from a block: first row/column as names/categories when they're text.
 pub fn series_from_range(sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> {
-    series_from_block(sh, r, by_rows, &|_| false)
-}
-
-/// [`series_from_range`] for a new chart: `is_date` tells date cells, which label the categories
-/// like text does. With series in columns, the leading columns of text or dates are the category
-/// labels (the first of them is used), and a column with no number in it is no series: a
-/// `Date | Region | Product | Revenue` list plots one Revenue series over the dates, not a series
-/// of date serial numbers next to two flat series of text.
-pub fn series_from_block(sh: &Sheet, r: RangeRef, by_rows: bool, is_date: &dyn Fn(CellRef) -> bool) -> Vec<Series> {
     let q = gridcraft_formula::quote_sheet(&sh.name);
     let abs = |r: RangeRef| {
         format!(
@@ -77,29 +68,12 @@ pub fn series_from_block(sh: &Sheet, r: RangeRef, by_rows: bool, is_date: &dyn F
     // when it holds numbers (years, X values), the usual spreadsheet convention, so it isn't
     // plotted as a series of its own (#287).
     let blank_corner = header_row && sh.value(r.start).is_empty();
-    let first_data_row = r.start.row + header_row as u32;
-    let label_like = |c: CellRef| is_text(c) || is_date(c);
-    let numbers_in =
-        |col: u32| (first_data_row..=r.end.row).any(|row| sh.value(CellRef::new(row, col)).as_f64().is_some() && !is_date(CellRef::new(row, col)));
-    // Leading label columns: text or dates all the way down, with a number column after them.
-    let mut labels = 0u32;
-    if !by_rows {
-        while r.start.col + labels < r.end.col
-            && (first_data_row..=r.end.row).all(|row| label_like(CellRef::new(row, r.start.col + labels)))
-            && (r.start.col + labels + 1..=r.end.col).any(numbers_in)
-        {
-            labels += 1;
-        }
-    }
-    let label_col = r.width() > 1
-        && (blank_corner || labels > 0 || (r.start.row + header_row as u32..=r.end.row).all(|row| is_text(CellRef::new(row, r.start.col))));
-    let skip = if labels > 0 { labels } else { label_col as u32 };
-    let data = RangeRef::new(CellRef::new(first_data_row, r.start.col + skip), r.end);
+    let label_col =
+        r.width() > 1 && (blank_corner || (r.start.row + header_row as u32..=r.end.row).all(|row| is_text(CellRef::new(row, r.start.col))));
+    let data = RangeRef::new(CellRef::new(r.start.row + header_row as u32, r.start.col + label_col as u32), r.end);
     let mut out = Vec::new();
     if !by_rows {
-        // Columns without a number (more labels, notes) are left out when others have numbers.
-        let any_numbers = (data.start.col..=data.end.col).any(numbers_in);
-        for c in (data.start.col..=data.end.col).filter(|c| !any_numbers || numbers_in(*c)) {
+        for c in data.start.col..=data.end.col {
             out.push(Series {
                 name: header_row.then(|| abs1(CellRef::new(r.start.row, c))),
                 categories: label_col.then(|| abs(RangeRef::new(CellRef::new(data.start.row, r.start.col), CellRef::new(data.end.row, r.start.col)))),
@@ -133,14 +107,12 @@ pub fn series_from_block(sh: &Sheet, r: RangeRef, by_rows: bool, is_date: &dyn F
     out
 }
 
-/// The series of a selection of one or several areas; `is_date` marks date cells (category
-/// labels shown as dates).
-fn series_from_areas(sh: &Sheet, areas: &[RangeRef], is_date: &dyn Fn(CellRef) -> bool) -> Result<(RangeRef, bool, Vec<Series>)> {
+fn series_from_areas(sh: &Sheet, areas: &[RangeRef]) -> Result<(RangeRef, bool, Vec<Series>)> {
     let Some(first) = areas.first().copied() else { return Err(EngineError::Other("Select data for the chart first.".into())) };
     let bounds = areas.iter().skip(1).fold(first, |r, area| r.union(area));
     if areas.len() == 1 {
         let by_rows = first.width() > first.height() + 1;
-        return Ok((bounds, by_rows, series_from_block(sh, first, by_rows, is_date)));
+        return Ok((bounds, by_rows, series_from_range(sh, first, by_rows)));
     }
     let valid_shape = first.width() == 1
         && first.height() > 1
@@ -149,10 +121,10 @@ fn series_from_areas(sh: &Sheet, areas: &[RangeRef], is_date: &dyn Fn(CellRef) -
     if !valid_shape {
         return Err(bad("insert.chart", "multi-area charts require a text category column followed by equal-height series columns"));
     }
-    let category = series_from_block(sh, first, false, is_date).into_iter().next().map(|series| series.values);
+    let category = series_from_range(sh, first, false).into_iter().next().map(|series| series.values);
     let mut series = Vec::with_capacity(areas.len() - 1);
     for area in &areas[1..] {
-        let mut area_series = series_from_block(sh, *area, false, is_date);
+        let mut area_series = series_from_range(sh, *area, false);
         let Some(mut item) = area_series.pop() else {
             return Err(EngineError::Other("Select data for the chart first.".into()));
         };
@@ -192,7 +164,7 @@ pub fn recommend_charts(s: &Session, p: &Json) -> Result<Vec<(&'static str, &'st
     let sheet = target_sheet(s, p)?;
     let d = s.doc()?;
     let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
-    let (_, by_rows, series) = series_from_areas(sh, &areas, &date_cells(&d.wb, sh))?;
+    let (_, by_rows, series) = series_from_areas(sh, &areas)?;
     let ranges: Vec<RangeRef> = series
         .iter()
         .filter_map(|x| match gridcraft_formula::parse(&x.values) {
@@ -259,16 +231,13 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
     let d = s.doc()?;
     let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
     let kind = chart_kind(&t, &sub);
-    let (bounds, by_rows, mut series) = series_from_areas(sh, &areas, &date_cells(&d.wb, sh))?;
+    let (bounds, by_rows, mut series) = series_from_areas(sh, &areas)?;
     if series.is_empty() {
         return Err(EngineError::Other("Select data for the chart first.".into()));
     }
     scatter_x_from_first(kind, &mut series);
     let id = d.wb.next_object_id();
-    let width = f64_param(p, "width").unwrap_or(480.0) as f32;
-    let height = f64_param(p, "height").unwrap_or(288.0) as f32;
-    let at = cell_param_on(s, p, "at", sheet)?
-        .unwrap_or_else(|| free_spot(sh, CellRef::new(bounds.start.row, bounds.end.col.saturating_add(2)), width, height));
+    let at = cell_param_on(s, p, "at", sheet)?.unwrap_or_else(|| CellRef::new(bounds.start.row, bounds.end.col + 2));
     let title = str_param(p, "title").map(str::to_string).or_else(|| {
         if series.len() == 1 {
             series[0].name.as_ref().map(|n| gridcraft_calc::evaluate(&d.wb, sheet, at, n).display())
@@ -279,7 +248,14 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
     let chart = Chart {
         id,
         kind,
-        anchor: Anchor { cell: at, dx: 0.0, dy: 0.0, width, height, mode: anchor_mode_param(p).unwrap_or_default() },
+        anchor: Anchor {
+            cell: at,
+            dx: 0.0,
+            dy: 0.0,
+            width: f64_param(p, "width").unwrap_or(480.0) as f32,
+            height: f64_param(p, "height").unwrap_or(288.0) as f32,
+            mode: anchor_mode_param(p).unwrap_or_default(),
+        },
         title,
         series,
         legend: if matches!(kind, ChartKind::Pie | ChartKind::Doughnut) { LegendPos::Right } else { LegendPos::Bottom },
@@ -294,42 +270,6 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
     };
     Ok((sheet, chart))
 }
-
-/// Whether a cell holds a date (a number shown in a date format).
-fn date_cells<'a>(wb: &'a gridcraft_model::Workbook, sh: &'a Sheet) -> impl Fn(CellRef) -> bool + 'a {
-    move |c| sh.value(c).as_f64().is_some() && crate::display::number_format(wb.styles.get(sh.style_id(c)).num_fmt.as_str()).is_date()
-}
-
-/// Where a new object of `w` × `h` goes, starting at `at`: moved down past the charts, pictures,
-/// shapes and slicers it would cover, so a second chart doesn't land on the first.
-fn free_spot(sh: &Sheet, at: CellRef, w: f32, h: f32) -> CellRef {
-    let rect = |a: &gridcraft_model::Anchor| {
-        let x = sh.col_left(a.cell.col) + f64::from(a.dx);
-        let y = sh.row_top(a.cell.row) + f64::from(a.dy);
-        (x, y, x + f64::from(a.width.max(0.0)), y + f64::from(a.height.max(0.0)))
-    };
-    let anchors: Vec<(f64, f64, f64, f64)> = sh
-        .charts
-        .iter()
-        .map(|c| rect(&c.anchor))
-        .chain(sh.images.iter().map(|i| rect(&i.anchor)))
-        .chain(sh.shapes.iter().map(|s| rect(&s.anchor)))
-        .chain(sh.slicers.iter().map(|s| rect(&s.anchor)))
-        .collect();
-    let mut at = at;
-    for _ in 0..64 {
-        let (x0, y0) = (sh.col_left(at.col), sh.row_top(at.row));
-        let (x1, y1) = (x0 + f64::from(w.max(1.0)), y0 + f64::from(h.max(1.0)));
-        let Some(bottom) = anchors.iter().filter(|o| o.0 < x1 && x0 < o.2 && o.1 < y1 && y0 < o.3).map(|o| o.3).reduce(f64::max) else { break };
-        let next = sh.row_at(bottom).saturating_add(1);
-        if next <= at.row || next >= gridcraft_core::MAX_ROWS {
-            break;
-        }
-        at.row = next;
-    }
-    at
-}
-
 
 pub(super) fn insert_chart(s: &mut Session, p: &Json) -> Result<Json> {
     let (sheet, chart) = build_chart(s, p)?;

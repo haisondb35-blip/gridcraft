@@ -4,7 +4,6 @@ use super::interact::delete_selected_object;
 use super::menus::is_checkbox;
 use super::{CellRef, Drag, Sheet, SheetApp, json};
 
-/// Grid keyboard handling when no text field has focus.
 /// Input methods compose over the active cell (see [`keyboard`]).
 fn allow_ime(app: &SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &Geo, sh: &Sheet) {
     if let Some(active) = app.session.active().map(|d| d.selection.active) {
@@ -13,6 +12,37 @@ fn allow_ime(app: &SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &G
     }
 }
 
+/// A typed character, or an input method's first composition or commit: it starts an edit of the
+/// active cell.
+fn starts_edit(ev: &egui::Event) -> bool {
+    match ev {
+        egui::Event::Text(text) => !text.is_empty() && text.chars().all(|c| !c.is_control()),
+        egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => !text.is_empty(),
+        egui::Event::Ime(egui::ImeEvent::Commit(text)) => text.chars().any(|c| !c.is_control()),
+        _ => false,
+    }
+}
+
+/// Start editing the active cell with `ev` (see [`starts_edit`]); the editor gets the rest of
+/// this frame's events, so the input method carries on in it.
+fn begin_typing(app: &mut SheetApp, ctx: &egui::Context, ev: egui::Event, rest: impl Iterator<Item = egui::Event>) {
+    match ev {
+        egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
+            app.begin_edit(Some(text), false);
+            if let Some(ed) = app.editor.as_mut() {
+                ed.caret = ed.text.chars().count();
+            }
+            forward_to_editor(app, ctx, rest);
+        }
+        // A composition in progress: the editor shows it and takes the commit.
+        ev => {
+            app.begin_edit(Some(String::new()), false);
+            forward_to_editor(app, ctx, std::iter::once(ev).chain(rest));
+        }
+    }
+}
+
+/// Grid keyboard handling when no text field has focus.
 pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &Geo, sh: &Sheet) {
     // Focus left on an editor that no longer exists goes back to the grid.
     let stale = [egui::Id::unique("gridcraft.cell_editor"), egui::Id::unique("gridcraft.formula_bar"), crate::text_box::editor_id()];
@@ -23,7 +53,7 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
     let other_focus = ctx.memory(|m| m.focused()).is_some_and(|f| f != resp.id && (editing || !stale.contains(&f)));
     // An open filter menu owns the keyboard even when a click inside it left focus on nothing (#1516).
     // So do the fill menu (its Esc closes it, not the copy) and the right-drag that opens it (an
-    // arrow key would move the selection the menu fills from).
+    // arrow key would move the selection the menu fills from), and a macro's question.
     if editing
         || app.dialog.is_some()
         || other_focus
@@ -31,6 +61,7 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
         || app.grid.filter_menu.is_some()
         || app.grid.fill_menu.is_some()
         || matches!(app.grid.drag, Drag::Fill { menu: true, .. })
+        || app.macros.question.is_some()
     {
         return;
     }
@@ -75,26 +106,8 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             // insert text at, so a middle click on a cell is deliberately not a paste.
             egui::Event::MiddleClickPaste { .. } => {}
             egui::Event::Text(_) if shortcut_pressed || shortcut_ran => {}
-            egui::Event::Text(text) if text.chars().all(|c| !c.is_control()) && !text.is_empty() => {
-                app.begin_edit(Some(text), false);
-                if let Some(ed) = app.editor.as_mut() {
-                    ed.caret = ed.text.chars().count();
-                }
-                forward_to_editor(app, ctx, events);
-                return;
-            }
-            // An input method's first composition starts the edit; the editor carries it on.
-            egui::Event::Ime(egui::ImeEvent::Preedit { ref text, .. }) if !text.is_empty() && !shortcut_pressed => {
-                app.begin_edit(Some(String::new()), false);
-                forward_to_editor(app, ctx, std::iter::once(ev).chain(events));
-                return;
-            }
-            egui::Event::Ime(egui::ImeEvent::Commit(text)) if !shortcut_pressed && text.chars().any(|c| !c.is_control()) => {
-                app.begin_edit(Some(text), false);
-                if let Some(ed) = app.editor.as_mut() {
-                    ed.caret = ed.text.chars().count();
-                }
-                forward_to_editor(app, ctx, events);
+            ev if !shortcut_pressed && starts_edit(&ev) => {
+                begin_typing(app, ctx, ev, events);
                 return;
             }
             egui::Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
@@ -176,6 +189,8 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                     }
                     Key::F9 => app.run_or_alert("formulas.calculateNow", json!({})),
                     Key::F4 if !cmd => {}
+                    // Ctrl+Shift+letter (⌘⇧letter) runs the macro with that shortcut, unless GridCraft uses it.
+                    _ if cmd && shift && !m.alt && crate::macro_ui::run_shortcut(app, key) => {}
                     _ if cmd && !crate::keymap::altgr_text(ctx, m, ctx.os() == egui::os::OperatingSystem::Mac) => {
                         crate::ribbon::shortcut(app, key, m)
                     }

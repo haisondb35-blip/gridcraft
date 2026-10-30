@@ -69,33 +69,43 @@ fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     let lang = app.ui.language;
     section(ui, lang, "Interface");
     egui::Grid::new("options_interface").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
-        ui.label(lang.tr("Display theme"));
+        let label = ui.label(lang.tr("Display theme"));
         let mode = app.ui.theme_mode();
         let current = match mode {
             "system" => "System",
             "dark" => "Dark",
             _ => "Light",
         };
-        craft_ui::ComboBox::from_id_salt("backstage_theme").width(200.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
-            for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
-                if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
-                    app.run_or_alert("view.theme", json!({"mode": value}));
+        craft_ui::ComboBox::from_id_salt("backstage_theme")
+            .width(200.0)
+            .selected_text(lang.tr(current))
+            .show_ui(ui, |ui| {
+                for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+                    if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
+                        app.run_or_alert("view.theme", json!({"mode": value}));
+                    }
                 }
-            }
-        });
+            })
+            .response
+            .labelled_by(label.id);
         ui.end_row();
         // Interface size (#230), as in the View tab: the ribbon, its buttons, menus and dialogs
         // grow together, on top of the desktop's scale.
-        ui.label(lang.tr("Interface size"));
+        let label = ui.label(lang.tr("Interface size"));
         let size = app.ui.interface_scale;
         let text = |v: u16| if v == 100 { lang.tr("Auto").to_string() } else { format!("{v}%") };
-        craft_ui::ComboBox::from_id_salt("backstage_interface_size").width(200.0).selected_text(text(size)).show_ui(ui, |ui| {
-            for v in [100, 75, 90, 110, 125, 150, 175, 200] {
-                if ui.selectable_label(v == size, text(v)).clicked() {
-                    app.run_or_alert("view.interfaceScale", json!({"percent": v}));
+        craft_ui::ComboBox::from_id_salt("backstage_interface_size")
+            .width(200.0)
+            .selected_text(text(size))
+            .show_ui(ui, |ui| {
+                for v in [100, 75, 90, 110, 125, 150, 175, 200] {
+                    if ui.selectable_label(v == size, text(v)).clicked() {
+                        app.run_or_alert("view.interfaceScale", json!({"percent": v}));
+                    }
                 }
-            }
-        });
+            })
+            .response
+            .labelled_by(label.id);
         ui.end_row();
     });
     hint(
@@ -113,25 +123,30 @@ fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     section(ui, lang, "When creating new workbooks");
     let prefs = app.session.prefs.clone();
     egui::Grid::new("options_new_workbooks").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
-        ui.label(lang.tr("Use this as the default font"));
+        let label = ui.label(lang.tr("Use this as the default font"));
         let fonts = ["Calibri", "Aptos", "Arial", "Times New Roman", "Cambria", "Tahoma", "Segoe UI", "Verdana"];
-        craft_ui::ComboBox::from_id_salt("options_default_font").width(200.0).selected_text(&prefs.default_font).show_ui(ui, |ui| {
-            for f in fonts {
-                if ui.selectable_label(prefs.default_font == f, f).clicked() {
-                    app.run_or_alert("options.set", json!({"defaultFont": f}));
+        craft_ui::ComboBox::from_id_salt("options_default_font")
+            .width(200.0)
+            .selected_text(&prefs.default_font)
+            .show_ui(ui, |ui| {
+                for f in fonts {
+                    if ui.selectable_label(prefs.default_font == f, f).clicked() {
+                        app.run_or_alert("options.set", json!({"defaultFont": f}));
+                    }
                 }
-            }
-        });
+            })
+            .response
+            .labelled_by(label.id);
         ui.end_row();
-        ui.label(lang.tr("Font size"));
+        let label = ui.label(lang.tr("Font size"));
         let mut size = prefs.default_font_size;
-        if ui.add(egui::DragValue::new(&mut size).range(1.0..=409.0).speed(0.5)).changed() {
+        if ui.add(egui::DragValue::new(&mut size).range(1.0..=409.0).speed(0.5)).labelled_by(label.id).changed() {
             app.run_or_alert("options.set", json!({"defaultFontSize": size}));
         }
         ui.end_row();
-        ui.label(lang.tr("Include this many sheets"));
+        let label = ui.label(lang.tr("Include this many sheets"));
         let mut sheets = prefs.sheets_in_new_workbook;
-        if ui.add(egui::DragValue::new(&mut sheets).range(1..=255)).changed() {
+        if ui.add(egui::DragValue::new(&mut sheets).range(1..=255)).labelled_by(label.id).changed() {
             app.run_or_alert("options.set", json!({"sheetsInNewWorkbook": sheets}));
         }
         ui.end_row();
@@ -139,12 +154,12 @@ fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     ui.add_space(16.0);
     section(ui, lang, "Personalize");
     ui.horizontal(|ui| {
-        ui.label(lang.tr("User name"));
+        let label = ui.label(lang.tr("User name"));
         let id = ui.make_persistent_id("options_user_name");
         if !ui.ctx().memory(|m| m.has_focus(id)) {
             bs.user_name.clone_from(&prefs.user_name);
         }
-        let resp = ui.add(egui::TextEdit::singleline(&mut bs.user_name).id(id).desired_width(260.0));
+        let resp = ui.add(egui::TextEdit::singleline(&mut bs.user_name).id(id).desired_width(260.0)).labelled_by(label.id);
         if resp.lost_focus() && bs.user_name.trim() != prefs.user_name && !bs.user_name.trim().is_empty() {
             app.run_or_alert("options.set", json!({"userName": bs.user_name.trim()}));
         }
@@ -192,14 +207,19 @@ fn options_language(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     section(ui, lang, "Interface language");
     ui.horizontal(|ui| {
-        ui.label(lang.tr("Interface language"));
-        craft_ui::ComboBox::from_id_salt("backstage_language").width(200.0).selected_text(lang.name()).show_ui(ui, |ui| {
-            for l in i18n::Language::for_picker() {
-                if ui.selectable_label(l == lang, l.name()).clicked() {
-                    app.run_or_alert("app.language.set", json!({"language": l.code()}));
+        let label = ui.label(lang.tr("Interface language"));
+        craft_ui::ComboBox::from_id_salt("backstage_language")
+            .width(200.0)
+            .selected_text(lang.name())
+            .show_ui(ui, |ui| {
+                for l in i18n::Language::for_picker() {
+                    if ui.selectable_label(l == lang, l.name()).clicked() {
+                        app.run_or_alert("app.language.set", json!({"language": l.code()}));
+                    }
                 }
-            }
-        });
+            })
+            .response
+            .labelled_by(label.id);
     });
 }
 
@@ -213,7 +233,7 @@ fn options_advanced(app: &mut SheetApp, ui: &mut Ui) {
     ui.add_space(6.0);
     let dir = app.session.prefs.enter_direction.clone();
     ui.horizontal(|ui| {
-        ui.label(lang.tr("After pressing Enter, move selection"));
+        let caption = ui.label(lang.tr("After pressing Enter, move selection"));
         let label = |d: &str| match d {
             "right" => "Right",
             "up" => "Up",
@@ -221,13 +241,18 @@ fn options_advanced(app: &mut SheetApp, ui: &mut Ui) {
             "none" => "Don't move",
             _ => "Down",
         };
-        craft_ui::ComboBox::from_id_salt("options_enter_direction").width(140.0).selected_text(lang.tr(label(&dir))).show_ui(ui, |ui| {
-            for d in ["down", "right", "up", "left", "none"] {
-                if ui.selectable_label(dir == d, lang.tr(label(d))).clicked() {
-                    app.run_or_alert("options.set", json!({"enterDirection": d}));
+        craft_ui::ComboBox::from_id_salt("options_enter_direction")
+            .width(140.0)
+            .selected_text(lang.tr(label(&dir)))
+            .show_ui(ui, |ui| {
+                for d in ["down", "right", "up", "left", "none"] {
+                    if ui.selectable_label(dir == d, lang.tr(label(d))).clicked() {
+                        app.run_or_alert("options.set", json!({"enterDirection": d}));
+                    }
                 }
-            }
-        });
+            })
+            .response
+            .labelled_by(caption.id);
     });
     ui.add_space(16.0);
     section(ui, lang, "Display");
