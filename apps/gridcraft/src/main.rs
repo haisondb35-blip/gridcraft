@@ -311,17 +311,18 @@ fn main() -> eframe::Result<()> {
     {
         log::warn!("sample {s}: {e}");
     }
-    if session.documents().is_empty() {
-        session.new_workbook();
-    }
     let mut app = SheetApp::new(session, services());
     app.watch_desktop_theme();
     // brian-local: no update check at start-up (an update would install upstream's release over
     // this build, without its additions); Help › Check for Updates still checks on request.
     // app.start_update_check();
-    app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;
     load_prefs(&mut app);
+    // Stamp the startup workbook's author from the persisted user name.
+    if app.session.documents().is_empty() {
+        app.session.new_workbook();
+    }
+    app.after_engine(); // Show warnings from the sample.
     // Files named on the command line (a double-click on Windows and Linux) open as File › Open
     // opens them: a password-protected one asks for its password, and errors are shown, not
     // only logged. Each replaces the untouched blank Book1, as a file opened from Finder does.

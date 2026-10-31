@@ -18,7 +18,7 @@ fn copied(wb: &Workbook, range: &str) -> String {
     range_html(wb, 0, r, &crate::display::range_text(wb, 0, r)).unwrap()
 }
 
-// `std::os::unix::fs::symlink`: Unix only.
+#[cfg(not(target_arch = "wasm32"))]
 #[cfg(unix)]
 #[test]
 fn save_fails_upfront_when_the_temp_name_is_taken() {

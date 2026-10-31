@@ -601,6 +601,7 @@ impl Session {
             }
             wb.styles = gridcraft_model::StyleTable::with_default(normal);
         }
+        wb.props.author = self.prefs.user_name.clone();
         for _ in 1..self.prefs.sheets_in_new_workbook.clamp(1, 255) {
             let name = wb.next_sheet_name();
             wb.sheets.push(Arc::new(gridcraft_model::Sheet::new(name)));
