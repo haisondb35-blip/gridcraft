@@ -1838,6 +1838,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "log",
  "peniko",
+ "png",
  "skrifa",
  "smallvec",
  "vello_common",
@@ -1937,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "arboard",
  "chrono",
@@ -1964,7 +1965,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-calc"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -1976,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-chart"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-core",
@@ -1987,7 +1988,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-cli"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-engine",
  "gridcraft-mcp",
@@ -1999,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-core"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "chrono",
  "js-sys",
@@ -2010,13 +2011,14 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-engine"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-chart",
  "gridcraft-core",
  "gridcraft-formula",
  "gridcraft-functions",
+ "gridcraft-metafile",
  "gridcraft-model",
  "gridcraft-numfmt",
  "gridcraft-pdf",
@@ -2032,7 +2034,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-formula"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-core",
  "serde",
@@ -2041,7 +2043,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-functions"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-core",
  "regex",
@@ -2049,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-mcp"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-engine",
  "log",
@@ -2057,8 +2059,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gridcraft-metafile"
+version = "0.14.4"
+dependencies = [
+ "image",
+ "kurbo",
+ "skrifa",
+ "thiserror 2.0.21",
+ "vello_cpu",
+]
+
+[[package]]
 name = "gridcraft-model"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2070,14 +2083,14 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-numfmt"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-core",
 ]
 
 [[package]]
 name = "gridcraft-pdf"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "epaint_default_fonts",
  "skrifa",
@@ -2085,7 +2098,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-ui-egui"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "craft-ui",
  "craft-update",
@@ -2095,6 +2108,7 @@ dependencies = [
  "epaint_default_fonts",
  "gridcraft-chart",
  "gridcraft-engine",
+ "gridcraft-metafile",
  "gridcraft-pdf",
  "gridcraft-xlsx",
  "image",
@@ -2111,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-web"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "eframe",
  "egui",
@@ -2128,13 +2142,14 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-xlsx"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "aes",
  "gridcraft-core",
  "gridcraft-formula",
  "gridcraft-functions",
  "gridcraft-model",
+ "miniz_oxide 0.9.1",
  "quick-xml 0.41.0",
  "sha1 0.11.0",
  "sha2 0.11.1",
@@ -5462,6 +5477,7 @@ dependencies = [
  "guillotiere",
  "log",
  "peniko",
+ "png",
  "smallvec",
  "thiserror 2.0.21",
 ]
@@ -5475,6 +5491,7 @@ dependencies = [
  "bytemuck",
  "glifo",
  "hashbrown 0.17.1",
+ "png",
  "vello_common",
 ]
 
@@ -6409,7 +6426,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "gridcraft-engine",
  "serde_json",

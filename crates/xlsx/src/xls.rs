@@ -676,7 +676,7 @@ fn worksheet(
         st.sheet.images.push(Image { id, anchor, data: data.into(), mime: mime.to_string(), alt: String::new() });
     }
     if skipped_pictures > 0 {
-        report.warn("Some pictures in .xls files are in a format GridCraft doesn't show yet (metafiles, bitmaps) and were skipped.");
+        report.warn("Some pictures in .xls files are damaged or in a format GridCraft doesn't show yet (PICT, TIFF) and were skipped.");
     }
     // Comments: a Note names its text's object, whose TxO came earlier in the substream.
     for (cell, object, author, visible) in std::mem::take(&mut st.notes) {

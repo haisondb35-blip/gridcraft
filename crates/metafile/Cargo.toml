@@ -1,0 +1,17 @@
+[package]
+name = "gridcraft-metafile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GridCraft metafiles (ported from DeckCraft): parses Windows WMF and EMF records into a neutral vector model (paths and bitmaps) and draws them"
+
+[lints]
+workspace = true
+
+[dependencies]
+kurbo = { workspace = true }
+thiserror = { workspace = true }
+image = { workspace = true }
+# The rasterizer: vello_cpu draws, skrifa reads glyph outlines (both already in the tree).
+vello_cpu = { workspace = true }
+skrifa = { workspace = true }

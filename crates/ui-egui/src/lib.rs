@@ -30,6 +30,7 @@ pub mod dnd;
 pub mod doc_windows;
 pub mod editor;
 mod floating_pictures;
+mod metafile_picture;
 pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;

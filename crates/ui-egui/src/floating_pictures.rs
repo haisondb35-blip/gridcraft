@@ -122,6 +122,12 @@ fn texture_side(want: u32, gpu_max: usize) -> u32 {
 /// Decodes a picture to fit a `side` × `side` square, and says whether that is the whole picture
 /// (it was no larger, or `side` is as large as a texture may be).
 fn decode(data: &[u8], side: u32) -> Option<(egui::ColorImage, bool)> {
+    // EMF and WMF are vectors: drawn at the size asked, again when zooming in further.
+    if gridcraft_metafile::is_metafile(data) {
+        let rgba = gridcraft_metafile::rasterize(data, side)?;
+        let image = egui::ColorImage::from_rgba_unmultiplied([rgba.width() as usize, rgba.height() as usize], rgba.as_raw());
+        return Some((image, side >= MAX_TEXTURE_SIDE));
+    }
     let format = image::guess_format(data).ok()?;
     let (w, h) = image::ImageReader::with_format(Cursor::new(data), format).into_dimensions().ok()?;
     if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE || u64::from(w) * u64::from(h) > MAX_PIXELS {

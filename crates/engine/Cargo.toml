@@ -23,6 +23,8 @@ log = { workspace = true }
 gridcraft-xlsx = { workspace = true }
 gridcraft-chart = { workspace = true }
 gridcraft-pdf = { workspace = true }
+# Prints EMF and WMF pictures.
+gridcraft-metafile = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]

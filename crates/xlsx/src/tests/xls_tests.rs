@@ -795,22 +795,27 @@ fn reads_conditional_formats() {
 
 /// Pictures: the workbook's MsoDrawingGroup stores a PNG (a BStore entry), split across a
 /// Continue record as real files do; a sheet's MsoDrawing has a picture shape naming it, anchored
-/// from B2 to D4 ([MS-ODRAW]). A metafile picture is skipped with a warning.
+/// from B2 to D4 ([MS-ODRAW]). An EMF picture (zlib-compressed, as Excel saves it) is read; a
+/// damaged one is skipped with a warning.
 #[test]
 fn reads_pictures() {
     let od = |vi: u16, ty: u16, body: &[u8]| cat(&[&vi.to_le_bytes(), &ty.to_le_bytes(), &(body.len() as u32).to_le_bytes(), body]);
     let png = [0x89, b'P', b'N', b'G', 1, 2, 3];
     let blip = od(0x6E00, 0xF01E, &cat(&[&[0u8; 17], &png]));
-    let emf = od(0x3D40, 0xF01A, &[0u8; 60]);
+    let emf_bytes = b" EMF the picture's own records".to_vec();
+    let packed = miniz_oxide::deflate::compress_to_vec_zlib(&emf_bytes, 6);
+    let meta_header = cat(&[&(emf_bytes.len() as u32).to_le_bytes(), &[0u8; 24], &(packed.len() as u32).to_le_bytes(), &[0x00, 0xFE]]);
+    let emf = od(0x3D40, 0xF01A, &cat(&[&[0u8; 16], &meta_header, &packed]));
+    let damaged = od(0x3D40, 0xF01A, &[0u8; 60]);
     let fbse = |b: &[u8]| od(0x0062, 0xF007, &cat(&[&[0u8; 36], b]));
-    let dgg = od(0x000F, 0xF000, &od(0x002F, 0xF001, &cat(&[&fbse(&blip), &fbse(&emf)])));
+    let dgg = od(0x000F, 0xF000, &od(0x002F, 0xF001, &cat(&[&fbse(&blip), &fbse(&emf), &fbse(&damaged)])));
     let (first, second) = dgg.split_at(30);
     let shape = |pib: u32, anchor: [u16; 8]| {
         let opt = od(0x0013, 0xF00B, &cat(&[&0x4104u16.to_le_bytes(), &pib.to_le_bytes()]));
         let a: Vec<u8> = std::iter::once(0u16).chain(anchor).flat_map(u16::to_le_bytes).collect();
         od(0x000F, 0xF004, &cat(&[&opt, &od(0, 0xF010, &a)]))
     };
-    let dg = od(0x000F, 0xF002, &od(0x000F, 0xF003, &cat(&[&shape(1, [1, 0, 1, 0, 3, 0, 3, 0]), &shape(2, [5, 0, 5, 0, 6, 0, 6, 0])])));
+    let dg = od(0x000F, 0xF002, &od(0x000F, 0xF003, &cat(&[&shape(1, [1, 0, 1, 0, 3, 0, 3, 0]), &shape(2, [5, 0, 5, 0, 6, 0, 6, 0]), &shape(3, [7, 0, 7, 0, 8, 0, 8, 0])])));
     let xf = rec(0x00E0, &cat(&[&u16s(&[0, 0, 0]), &[0; 14]]));
     let globals = |pos: u32| {
         cat(&[
@@ -826,14 +831,15 @@ fn reads_pictures() {
     let stream = cat(&[&globals(globals(0).len() as u32), &sheet]);
     let (wb, report) = read_xls(&compound("Workbook", &stream)).unwrap();
     let sh = &wb.sheets[0];
-    assert_eq!(sh.images.len(), 1, "{:?}", report.warnings);
+    assert_eq!(sh.images.len(), 2, "{:?}", report.warnings);
+    assert_eq!((sh.images[1].data.as_slice(), sh.images[1].mime.as_str()), (&emf_bytes[..], "image/x-emf"));
     let img = &sh.images[0];
     assert_eq!((img.data.as_slice(), img.mime.as_str()), (&png[..], "image/png"));
     assert_eq!(img.anchor.cell, CellRef::parse("B2").unwrap());
     let width = (sh.col_left(3) - sh.col_left(1)) as f32;
     let height = (sh.row_top(3) - sh.row_top(1)) as f32;
     assert!((img.anchor.width - width).abs() < 0.01 && (img.anchor.height - height).abs() < 0.01, "{:?}", img.anchor);
-    assert!(report.warnings.iter().any(|w| w.contains("metafiles")), "{:?}", report.warnings);
+    assert!(report.warnings.iter().any(|w| w.contains("doesn't show")), "{:?}", report.warnings);
 }
 
 /// AutoFilter: the built-in _FilterDatabase name (13) holds the range, and the sheet's

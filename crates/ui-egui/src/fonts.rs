@@ -203,6 +203,7 @@ fn catalog_now() -> Option<&'static [Face]> {
 pub fn start_scan() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
+        crate::metafile_picture::register();
         #[cfg(not(target_arch = "wasm32"))]
         if CATALOG.get().is_none() {
             // A failed spawn leaves the scan to the first blocking lookup.
@@ -290,7 +291,7 @@ pub fn role_key(family: &str, bold: bool, italic: bool) -> String {
 
 /// The face to use for a role, or `None` when the family has no faces. Missing bold/italic faces
 /// fall back to the family's regular face, so every bound role has data behind it.
-fn pick_face(faces: &[Face], bold: bool, italic: bool) -> Option<&Face> {
+pub(crate) fn pick_face(faces: &[Face], bold: bool, italic: bool) -> Option<&Face> {
     let regular = || faces.iter().find(|f| !f.italic && (f.weight - 400.0).abs() < 1.0);
     let exact = |wanted_bold: bool, wanted_italic: bool| {
         faces.iter().find(|f| f.italic == wanted_italic && if wanted_bold { f.weight >= 600.0 } else { f.weight < 600.0 })

@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/gridcraft", "apps/gridcraft-cli", "xtask"]
 
 [workspace.package]
-version = "0.14.3"
+version = "0.14.4"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -24,6 +24,7 @@ gridcraft-engine = { path = "crates/engine" }
 gridcraft-ui-egui = { path = "crates/ui-egui" }
 gridcraft-mcp = { path = "crates/mcp" }
 gridcraft-pdf = { path = "crates/pdf" }
+gridcraft-metafile = { path = "crates/metafile" }
 # Every craft-libs crate (craft-update and craft-window here, craft-ui in ui-egui, craft-print in
 # the app) comes from one storytold/craft-libs revision.
 # craft-update: app-specific pretend versions apply to startup and manual checks.
@@ -31,6 +32,9 @@ craft-update = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbf
 
 # foundation
 thiserror = "2"
+# Metafile paths and their rasterizer (both already in the tree through epaint).
+kurbo = "0.13"
+vello_cpu = "0.2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
@@ -45,7 +49,7 @@ sha2 = { version = "0.11", default-features = false }
 # Decrypting password-protected workbooks ([MS-OFFCRYPTO]): AES and SHA-1, pure Rust (wasm-safe).
 aes = { version = "0.9", default-features = false }
 sha1 = { version = "0.11", default-features = false }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 
 # ui
 egui = "0.37"

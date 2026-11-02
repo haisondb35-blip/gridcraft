@@ -35,6 +35,12 @@ fn anchor_rect(sh: &Sheet, a: &Anchor) -> (f64, f64, f64, f64) {
 
 /// Decodes an embedded picture to RGBA, downscaled to at most `max_w`×`max_h` pixels.
 fn decode_image(data: &[u8], max_w: u32, max_h: u32) -> Option<(Vec<u8>, u32, u32)> {
+    // EMF and WMF (old .xls logos and signatures) are vectors, drawn at the size printed.
+    if gridcraft_metafile::is_metafile(data) {
+        let rgba = gridcraft_metafile::rasterize(data, max_w.max(max_h))?;
+        let (pw, ph) = (rgba.width(), rgba.height());
+        return Some((rgba.into_raw(), pw, ph));
+    }
     let (w, h) = crate::io::image_size(data)?;
     if w == 0 || h == 0 || w as u64 * h as u64 > 60_000_000 {
         return None;
