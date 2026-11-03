@@ -1,0 +1,19 @@
+[package]
+name = "craft-clipboard"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The system clipboard as every Craft app reads and writes it: the platform's standard formats plus each app's own"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
+log = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = { version = "5.4", features = ["std"] }
+
+[target.'cfg(not(windows))'.dependencies]
+arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+
+[lints]
+workspace = true

@@ -19,8 +19,6 @@ mod logging;
 mod native_menu;
 mod print;
 
-use std::cell::RefCell;
-use std::rc::Rc;
 
 use gridcraft_engine::Session;
 use gridcraft_ui_egui::doc_windows::DocWindows;
@@ -139,32 +137,16 @@ fn save_prefs(app: &SheetApp) {
     }
 }
 
-/// Read the system clipboard through the shared handle, creating it on first use.
-fn read_clipboard<T>(
-    handle: &RefCell<Option<arboard::Clipboard>>,
-    read: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
-) -> Option<T> {
-    let mut clipboard = handle.try_borrow_mut().ok()?;
-    if clipboard.is_none() {
-        *clipboard = arboard::Clipboard::new().ok();
-    }
-    read(clipboard.as_mut()?).ok()
-}
-
 fn services() -> Services {
-    // Keep the owner alive: X11/Wayland serve clipboard data from this handle.
-    let clipboard: Rc<RefCell<Option<arboard::Clipboard>>> = Rc::default();
-    let (html_clipboard, text_clipboard) = (clipboard.clone(), clipboard.clone());
+    use craft_clipboard::Copy;
+    // The clipboard as every Craft app reads and writes it: Windows' standard formats (text, HTML,
+    // PNG and bitmaps, files), so web pages, office suites and the other Craft apps paste here.
     Services {
-        copy_html: Some(Box::new(move |html, text| {
-            let mut clipboard = clipboard.borrow_mut();
-            if clipboard.is_none() {
-                *clipboard = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
-            }
-            clipboard.as_mut().ok_or("clipboard unavailable")?.set_html(html, Some(text)).map_err(|e| e.to_string())
-        })),
-        paste_html: Some(Box::new(move || read_clipboard(&html_clipboard, |clipboard| clipboard.get().html()))),
-        paste_text: Some(Box::new(move || read_clipboard(&text_clipboard, |clipboard| clipboard.get_text()))),
+        copy_html: Some(Box::new(|html, text| craft_clipboard::write(&Copy { text: Some(text.into()), html: Some(html.into()), ..Copy::default() }))),
+        paste_html: Some(Box::new(|| craft_clipboard::html().map(|h| h.fragment))),
+        paste_text: Some(Box::new(craft_clipboard::text)),
+        copy_picture: Some(Box::new(|png| craft_clipboard::write(&Copy { png: Some(png.to_vec()), ..Copy::default() }))),
+        paste_picture: Some(Box::new(|| craft_clipboard::picture().map(|p| (p.mime.to_string(), p.data)))),
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
                 .add_filter("Spreadsheets", &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json"])

@@ -78,6 +78,11 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
         m.set_focus_lock_filter(resp.id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
     });
     let events = ctx.input(|i| i.events.clone());
+    // Ctrl+V over a picture (a screenshot, a browser's Copy Image, another app's picture) or over
+    // picture files copied in Explorer: egui sends no Paste event for those.
+    if app.paste_chord.textless_paste(&events) {
+        app.paste_picture();
+    }
     // A shortcut key that also types a character (Shift+Space sends Text(" ")) must not start an edit.
     let shortcut_pressed = events.iter().any(|e| {
         matches!(e, egui::Event::Key { pressed: true, modifiers: m, key, .. }
@@ -97,10 +102,8 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                 app.copy_to_clipboard(ctx, "edit.cut");
             }
             egui::Event::Paste(text) => app.paste_external(text),
-            // GridCraft has no image-clipboard pipeline and no cell-picture insert-from-clipboard
-            // command. Choosing to ignore `PasteImage` is explicit: inserting the bytes as a
-            // floating picture without a chosen anchor/size would be a new feature, not parity.
-            // A text representation, when the clipboard has one, still arrives as `Paste` above.
+            // The picture is pasted when the chord is released (`paste_chord` above), from the
+            // clipboard's own bytes rather than egui's decoded copy.
             egui::Event::PasteImage(_) => {}
             // PRIMARY middle-click paste belongs to egui's TextEdit; the grid has no caret to
             // insert text at, so a middle click on a cell is deliberately not a paste.

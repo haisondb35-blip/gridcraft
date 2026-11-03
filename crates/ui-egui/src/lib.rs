@@ -31,6 +31,7 @@ pub mod doc_windows;
 pub mod editor;
 mod floating_pictures;
 mod metafile_picture;
+mod paste_chord;
 pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;
@@ -282,6 +283,8 @@ pub struct SheetApp {
     /// text noted for an unpublished cut); `None` after a copy, or once the clipboard is seen
     /// holding other text. Once the cut has been pasted, Paste leaves this text alone.
     cut_text: Option<String>,
+    /// Ctrl+V over a picture or copied files (egui sends no Paste event for them).
+    paste_chord: paste_chord::PasteChord,
     /// A run of Tabs: (doc uid, sheet, column it started in, cell the last Tab landed on).
     /// Enter on that cell goes to the next row in the starting column, as in Excel (#911).
     tab_run: Option<(u64, usize, u32, CellRef)>,

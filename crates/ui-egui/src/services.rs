@@ -3,6 +3,8 @@ use super::printing;
 type PickSave = Box<dyn Fn(&str) -> Option<String>>;
 type OpenUrl = Box<dyn Fn(&str)>;
 type CopyHtml = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
+type CopyPicture = Box<dyn FnMut(&[u8]) -> Result<(), String>>;
+type PastePicture = Box<dyn FnMut() -> Option<(String, Vec<u8>)>>;
 type Download = Box<dyn Fn(&str, &[u8])>;
 type PrintPdf = Box<dyn Fn(&[u8])>;
 
@@ -32,6 +34,11 @@ pub struct Services {
     /// gets it from egui's `Event::Paste`). `None` from the host, or no service (web), pastes
     /// GridCraft's own clipboard.
     pub paste_text: Option<Box<dyn FnMut() -> Option<String>>>,
+    /// Put a picture (PNG bytes) on the system clipboard, as every program reads pictures.
+    pub copy_picture: Option<CopyPicture>,
+    /// The system clipboard's picture (MIME type, bytes): a bitmap, a copied picture file, or the
+    /// one picture of copied HTML. `None`: none there, or no host clipboard (web).
+    pub paste_picture: Option<PastePicture>,
     /// Web: deliver a file to the user (name, bytes).
     pub download: Option<Download>,
     /// Web: start an asynchronous file pick; the bytes arrive later in `inbox`.

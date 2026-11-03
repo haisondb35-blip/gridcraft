@@ -34,6 +34,8 @@ craft-print = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb
 craft-update = { workspace = true }
 rfd = { workspace = true }
 arboard = { workspace = true }
+# The clipboard as every Craft app reads and writes it (crates/craft-clipboard, shared).
+craft-clipboard = { path = "../../crates/craft-clipboard" }
 gridcraft-mcp = { workspace = true }
 # The control channel's token (OS random numbers); already in the tree.
 getrandom = "0.4"
