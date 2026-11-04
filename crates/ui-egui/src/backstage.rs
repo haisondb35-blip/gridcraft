@@ -121,6 +121,8 @@ pub struct Backstage {
     pub options_pane: &'static str,
     /// Options › General: the user name while it is edited.
     user_name: String,
+    /// Focus at the end of the previous frame, before egui clears it on Esc.
+    text_edit_focused: bool,
     /// Print: the whole workbook rather than the active sheet.
     pub print_all: bool,
     /// Print: fit each sheet on one page.
@@ -148,6 +150,7 @@ impl Backstage {
             all_props: false,
             options_pane: "general",
             user_name: String::new(),
+            text_edit_focused: false,
             print_all: false,
             fit_to_page: false,
             preview_page: 0,
@@ -170,7 +173,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let Some(mut bs) = app.backstage.take() else { return };
     let ctx = ui.ctx().clone();
     // Esc inside a text field leaves the field; it closes the view only from outside one.
-    let typing = ctx.text_edit_focused();
+    let typing = bs.text_edit_focused;
     let t = Tokens::get(&ctx);
     let lang = app.ui.language;
     let mut out = Outcome::default();
@@ -239,6 +242,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             });
         });
     });
+    bs.text_edit_focused = ctx.text_edit_focused();
     if !typing
         && app.dialog.is_none()
         && app.message.is_none()

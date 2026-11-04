@@ -109,7 +109,7 @@ fn table_style_strip(app: &mut SheetApp, ui: &mut Ui, tname: &str, current: &str
 }
 
 pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
-    let Some(id) = app.selected_chart else { return };
+    let Some(id) = app.selected_chart() else { return };
     let ae = big_button(ui, Icon::Chart, "Add Chart\nElement", "Add Chart Element", true);
     for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["chart.set"]) {
         keytip(app, ui, sequence, ae.rect.center_bottom());
@@ -126,6 +126,9 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
                 ("-", "", json!(null)),
                 ("Data Labels: Show", "chart.set", json!({"chart": id, "dataLabels": true})),
                 ("Data Labels: None", "chart.set", json!({"chart": id, "dataLabels": false})),
+                ("Data Table: With Legend Keys", "chart.addElement", json!({"chart": id, "element": "dataTable", "dataTableKeys": true})),
+                ("Data Table: No Legend Keys", "chart.addElement", json!({"chart": id, "element": "dataTable", "dataTableKeys": false})),
+                ("Data Table: None", "chart.addElement", json!({"chart": id, "element": "dataTable", "on": false})),
                 ("Gridlines: Show", "chart.set", json!({"chart": id, "gridlines": true})),
                 ("Gridlines: None", "chart.set", json!({"chart": id, "gridlines": false})),
             ],
@@ -178,14 +181,14 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
     control_keytip(app, ui, &__k, "chart.delete");
     if __k.clicked() {
         act(app, "chart.delete", json!({"chart": id}));
-        app.selected_chart = None;
+        app.selected_object = None;
     }
 }
 
 /// Picture Format (a picture selected): Crop puts crop handles on it (Enter or Escape when done),
 /// Reset Crop shows the whole picture again.
 pub(super) fn picture_format(app: &mut SheetApp, ui: &mut Ui) {
-    let Some(id) = app.selected_chart else { return };
+    let Some(id) = app.selected_image() else { return };
     let cropped = app.session.active().and_then(|d| d.wb.active()).and_then(|sh| sh.images.iter().find(|im| im.id == id)).is_some_and(|im| im.crop.iter().any(|c| *c != 0.0));
     if big_button(ui, Icon::Picture, "Crop", "Crop: drag the black handles to cut the picture, or drag inside it to move it under its frame (Enter when done)", false).clicked() {
         crate::picture_crop::toggle(app);

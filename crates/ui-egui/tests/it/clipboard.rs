@@ -482,3 +482,93 @@ fn the_cut_text_pastes_again_once_the_clipboard_has_held_other_text() {
     h.run_steps(2);
     assert_eq!(value_at(&h, "H1"), Some(Value::from("Name")), "the same text copied afresh pastes");
 }
+
+/// The floating pictures on the active sheet: (anchor cell, width, height, mime).
+fn pictures(h: &Harness) -> Vec<(String, f32, f32, String)> {
+    let sh = h.state().session.active().unwrap().wb.active().unwrap();
+    sh.images.iter().map(|i| (i.anchor.cell.a1(), i.anchor.width, i.anchor.height, i.mime.clone())).collect()
+}
+
+/// PNG bytes of a `w` x `h` picture of one colour.
+fn png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
+    let mut out = Vec::new();
+    image::RgbaImage::from_pixel(w, h, image::Rgba(rgba)).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
+    out
+}
+
+/// A host whose clipboard holds `picture` (MIME type, bytes) and the text `text`, counting the
+/// picture reads (brian-local: craft-clipboard reads the clipboard's own bytes, so files copied in
+/// Explorer and a web page's picture paste too, not only pixels).
+fn picture_clipboard(text: &str, picture: (&'static str, Vec<u8>)) -> (Rc<RefCell<usize>>, Services) {
+    let reads = Rc::new(RefCell::new(0));
+    let count = reads.clone();
+    let (_, mut services) = system_clipboard(text);
+    services.paste_picture = Some(Box::new(move || {
+        *count.borrow_mut() += 1;
+        Some((picture.0.to_string(), picture.1.clone()))
+    }));
+    (reads, services)
+}
+
+/// Ctrl/Cmd+V over a picture: egui swallows the press and sends no Paste, so only the release
+/// comes ([`crate`]'s `paste_chord`).
+fn press_paste_over_a_picture(h: &mut Harness) {
+    h.input_mut().events.push(Event::Key { key: egui::Key::V, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    h.run_steps(2);
+}
+
+#[test]
+fn cmd_v_with_a_picture_on_the_clipboard_inserts_it_at_the_active_cell() {
+    // A screenshot or a browser image: the clipboard has a picture and no text (#699, #3018, #3182).
+    let (_, services) = picture_clipboard("", ("image/png", png(4, 3, [200, 30, 30, 255])));
+    let mut h = harness(services);
+    h.state_mut().run("selection.set", json!({"cell": "C5"})).unwrap();
+    press_paste_over_a_picture(&mut h);
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    assert_eq!(pictures(&h), vec![("C5".to_string(), 4.0, 3.0, "image/png".to_string())]);
+    let sh = h.state().session.active().unwrap().wb.active().unwrap();
+    let png = image::load_from_memory(&sh.images[0].data).unwrap().to_rgba8();
+    assert_eq!(png.get_pixel(3, 2).0, [200, 30, 30, 255], "the pixels survive");
+
+    // One undo step removes it.
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    assert!(pictures(&h).is_empty());
+}
+
+#[test]
+fn a_malformed_clipboard_picture_is_refused_without_inserting() {
+    let (_, services) = picture_clipboard("", ("image/bmp", b"not a picture".to_vec()));
+    let mut h = harness(services);
+    press_paste_over_a_picture(&mut h);
+    assert!(pictures(&h).is_empty());
+    assert!(h.state().message.is_some(), "the user is told the paste failed");
+
+    // Wider than the 16384-pixel limit: refused from its header, before its pixels are decoded.
+    dismiss(&mut h);
+    let (_, services) = picture_clipboard("", ("image/png", png(20_000, 1, [255, 255, 255, 255])));
+    let mut h = harness(services);
+    press_paste_over_a_picture(&mut h);
+    assert!(pictures(&h).is_empty());
+    let message = format!("{:?}", h.state().message);
+    assert!(message.contains("too large"), "{message}");
+}
+
+#[test]
+fn ribbon_paste_pastes_a_clipboard_picture_when_there_is_no_text() {
+    let (reads, services) = picture_clipboard("", ("image/png", png(5, 2, [0, 0, 255, 255])));
+    let mut h = harness(services);
+    h.state_mut().run("selection.set", json!({"cell": "B7"})).unwrap();
+    click_paste(&mut h);
+    assert_eq!(*reads.borrow(), 1);
+    assert_eq!(pictures(&h), vec![("B7".to_string(), 5.0, 2.0, "image/png".to_string())]);
+}
+
+#[test]
+fn ribbon_paste_prefers_clipboard_text_over_a_picture() {
+    let (_, services) = picture_clipboard("words", ("image/png", png(1, 1, [0, 0, 0, 255])));
+    let mut h = harness(services);
+    h.state_mut().run("selection.set", json!({"cell": "D2"})).unwrap();
+    click_paste(&mut h);
+    assert_eq!(value_at(&h, "D2"), Some(Value::from("words")));
+    assert!(pictures(&h).is_empty());
+}

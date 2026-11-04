@@ -52,8 +52,9 @@ impl SheetApp {
     }
 
     /// Ribbon and menu Paste: paste the text on the system clipboard, as Cmd/Ctrl+V does. With no
-    /// text there, no host clipboard (web), or the text that was there when GridCraft last copied
-    /// without publishing, GridCraft's own clipboard is pasted.
+    /// text there but a picture, the picture is pasted. With neither, no host clipboard (web), or
+    /// the text that was there when GridCraft last copied without publishing, GridCraft's own
+    /// clipboard is pasted.
     pub fn paste_from_clipboard(&mut self) {
         match self.system_clipboard_text() {
             Some(text) if self.session.clipboard.is_none() || self.clipboard_text_at_copy.as_ref() != Some(&text) => self.paste_external(text),
@@ -82,7 +83,7 @@ impl SheetApp {
 
     /// The selected floating picture as PNG, and its id.
     fn selected_picture_png(&self) -> Option<(Vec<u8>, u32)> {
-        let id = self.selected_chart?;
+        let id = self.selected_image()?;
         let sh = self.session.active()?.wb.active()?;
         let im = sh.images.iter().find(|im| im.id == id)?;
         let png = picture_as_png(&im.data, &im.mime, im.anchor.width.max(im.anchor.height))?;
@@ -106,7 +107,7 @@ impl SheetApp {
         self.cut_text = None;
         if command == "edit.cut" {
             self.run_or_alert("object.delete", json!({"kind": "image", "id": id}));
-            self.selected_chart = None;
+            self.selected_object = None;
         }
         true
     }
@@ -116,13 +117,21 @@ impl SheetApp {
     pub fn paste_picture(&mut self) -> bool {
         let Some(read) = &mut self.services.paste_picture else { return false };
         let Some((mime, data)) = read() else { return false };
+        // Refuse a picture too large to paste before decoding its pixels (upstream's limits).
+        if let Some((w, h)) = picture_size(&data)
+            && let Err(e) = check_picture_size(w, h)
+        {
+            self.alert(e);
+            return true;
+        }
         let Some((mime, data)) = insertable_picture(&mime, data) else {
             self.alert("GridCraft can't show this kind of picture.".to_string());
             return true;
         };
+        // A floating picture whose top-left corner is the active cell, as Excel does.
         let params = json!({"base64": gridcraft_engine::io::base64_encode(&data), "mime": mime});
         match self.run_command("insert.picture", params) {
-            Ok(r) => self.selected_chart = r.get("image").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok()),
+            Ok(r) => self.select_object_id(r.get("image").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok())),
             Err(e) => self.alert(e),
         }
         true
@@ -164,4 +173,25 @@ fn insertable_picture(mime: &str, data: Vec<u8>) -> Option<(&'static str, Vec<u8
             Some(("image/png", out))
         }
     }
+}
+
+/// Largest clipboard picture pasted, per side and in total (an 8K screenshot fits).
+const MAX_PICTURE_SIDE: u32 = 16_384;
+const MAX_PICTURE_PIXELS: u64 = 64 * 1024 * 1024;
+
+/// Refuse empty clipboard pictures and sizes that would exhaust memory.
+fn check_picture_size(w: u32, h: u32) -> Result<(), String> {
+    if w == 0 || h == 0 {
+        return Err("The picture on the clipboard is empty.".into());
+    }
+    if w > MAX_PICTURE_SIDE || h > MAX_PICTURE_SIDE || u64::from(w) * u64::from(h) > MAX_PICTURE_PIXELS {
+        return Err("The picture on the clipboard is too large to paste.".into());
+    }
+    Ok(())
+}
+
+/// A bitmap's width and height read from its header, without decoding it; `None` for data the
+/// `image` crate can't size (metafiles, SVG).
+fn picture_size(data: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().ok()?.into_dimensions().ok()
 }

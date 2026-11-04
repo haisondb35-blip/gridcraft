@@ -58,7 +58,7 @@ fn dragging_draws_the_picked_shape_where_the_pointer_went() {
     // Not at the active cell A1: where the drag began (column 4 or so, row 6 or so).
     assert!(s[0].anchor.cell.col >= 3 && s[0].anchor.cell.row >= 5, "{:?}", s[0].anchor);
     assert!(h.state().shape_tool.is_none(), "the tool is put down");
-    assert_eq!(h.state().selected_chart, Some(s[0].id), "the new shape is selected");
+    assert_eq!(h.state().selected_object.map(|o| o.id), Some(s[0].id), "the new shape is selected");
 }
 
 #[test]

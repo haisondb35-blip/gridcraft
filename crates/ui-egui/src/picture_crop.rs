@@ -71,7 +71,7 @@ pub(crate) fn crop_drag(f: Frame, crop: [f32; 4], handle: u8, (dx, dy): (f32, f3
 
 /// The picture in crop mode: the selected picture, while crop mode is on for it.
 pub(crate) fn cropping<'a>(app: &SheetApp, sh: &'a Sheet) -> Option<&'a Image> {
-    let id = app.crop.filter(|id| app.selected_chart == Some(*id))?;
+    let id = app.crop.filter(|id| app.selected_image() == Some(*id))?;
     sh.images.iter().find(|im| im.id == id)
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn toggle(app: &mut SheetApp) -> bool {
         return true;
     }
     let Some(sh) = app.session.active().and_then(|d| d.wb.active()) else { return false };
-    let Some(id) = app.selected_chart.filter(|id| sh.images.iter().any(|im| im.id == *id)) else { return false };
+    let Some(id) = app.selected_image().filter(|id| sh.images.iter().any(|im| im.id == *id)) else { return false };
     app.crop = Some(id);
     true
 }
