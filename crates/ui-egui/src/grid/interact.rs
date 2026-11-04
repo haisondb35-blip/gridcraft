@@ -172,6 +172,11 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
     // Objects (charts, pictures, shapes, slicers) take clicks first. Only the primary button moves
     // them: a right-click that wobbles into a drag still opens the object's menu (#2067).
     let primary_drag = resp.drag_started_by(egui::PointerButton::Primary);
+    // Crop mode: its handles and the picture inside the frame come first.
+    let crop_at = if primary_drag { pointer.press_origin().or(pos) } else { pos };
+    if crate::picture_crop::press(app, &ctx, geo, sh, crop_at, primary_drag, primary_clicked) {
+        return;
+    }
     if primary_drag || primary_clicked {
         // A drag is recognised only after the pointer has moved, so grab the object where the press began.
         let at = if primary_drag { pointer.press_origin().or(pos) } else { pos };
@@ -733,6 +738,12 @@ fn handle_dragging(app: &mut SheetApp, input: &InteractionInput<'_>) {
                     json!({"kind": kind, "id": id, "at": nc.a1(), "dx": x0.max(0.0) - sh.col_left(nc.col) as f32, "dy": y0.max(0.0) - sh.row_top(nc.row) as f32})
                 };
                 let _ = app.session.run("object.move", params);
+                coalesce_last_undo(app);
+            }
+            Drag::Crop { id, handle, start, frame, crop } => {
+                let d = (p - start) / geo.z;
+                let (f, c) = crate::picture_crop::crop_drag(frame, crop, handle, (d.x, d.y));
+                let _ = app.session.run("picture.crop", crate::picture_crop::params(sh, id, f, c));
                 coalesce_last_undo(app);
             }
             Drag::None => {}

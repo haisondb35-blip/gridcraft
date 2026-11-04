@@ -673,7 +673,7 @@ fn worksheet(
             mode: AnchorMode::MoveAndSize,
         };
         let id = st.sheet.images.len() as u32 + 1;
-        st.sheet.images.push(Image { id, anchor, data: data.into(), mime: mime.to_string(), alt: String::new() });
+        st.sheet.images.push(Image { id, anchor, data: data.into(), mime: mime.to_string(), alt: String::new(), crop: [0.0; 4] });
     }
     if skipped_pictures > 0 {
         report.warn("Some pictures in .xls files are damaged or in a format GridCraft doesn't show yet (PICT, TIFF) and were skipped.");

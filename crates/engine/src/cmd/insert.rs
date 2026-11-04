@@ -149,6 +149,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("object.delete", "Delete Object", [], None, "{kind: chart|image|shape, id}", has_doc, delete_object),
         cmd!("object.move", "Move Object", [], None, "{kind: chart|image|shape, id, at?: \"C3\", dx?, dy?, width?, height?}", has_doc, move_object),
         cmd!(
+            "picture.crop",
+            "Crop",
+            ["Picture Format", "Size"],
+            None,
+            "{id, left?, top?, right?, bottom?: fraction cut off that side (0..0.95), reset?: bool, at?: \"C3\", dx?, dy?, width?, height?: the frame after the crop}",
+            has_doc,
+            crop_picture
+        ),
+        cmd!(
             "object.setAnchorMode",
             "Object Properties",
             [],
@@ -1118,6 +1127,7 @@ fn insert_picture(s: &mut Session, p: &Json) -> Result<Json> {
         data: data.into(),
         mime,
         alt: str_param(p, "alt").unwrap_or("").into(),
+        crop: [0.0; 4],
     };
     let sheet = d.wb.active_sheet();
     edit(s, |cx| {
@@ -1241,6 +1251,55 @@ fn delete_object(s: &mut Session, p: &Json) -> Result<Json> {
             _ => sh.shapes.retain(|c| c.id != id),
         }
         Ok(Json::Null)
+    })
+}
+
+/// `picture.crop`: a picture's crop, and with it its frame (where a crop handle dragged it), as
+/// one edit.
+fn crop_picture(s: &mut Session, p: &Json) -> Result<Json> {
+    let id = u32_param(p, "id").ok_or_else(|| bad("picture.crop", "missing `id`"))?;
+    let sheet = s.doc()?.wb.active_sheet();
+    let at = cell_param(s, p, "at")?;
+    let reset = bool_param(p, "reset").unwrap_or(false);
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        let Some(im) = sh.images.iter_mut().find(|c| c.id == id) else { return Err(bad("picture.crop", "no such picture")) };
+        if reset {
+            // The whole picture again, at the scale its visible part had.
+            let (lt, rb) = im.visible_uv();
+            im.anchor.width /= (rb[0] - lt[0]).max(0.01);
+            im.anchor.height /= (rb[1] - lt[1]).max(0.01);
+            im.crop = [0.0; 4];
+            return Ok(json!({"crop": im.crop}));
+        }
+        for (i, k) in ["left", "top", "right", "bottom"].into_iter().enumerate() {
+            if let Some(v) = f64_param(p, k).filter(|v| v.is_finite()) {
+                im.crop[i] = v.clamp(0.0, 0.95) as f32;
+            }
+        }
+        // Each way, something stays visible.
+        for (lo, hi) in [(0, 2), (1, 3)] {
+            if im.crop[lo] + im.crop[hi] > 0.99 {
+                im.crop[hi] = (0.99 - im.crop[lo]).max(0.0);
+            }
+        }
+        let a = &mut im.anchor;
+        if let Some(at) = at {
+            a.cell = at;
+        }
+        if let Some(v) = f64_param(p, "dx").filter(|v| v.is_finite()) {
+            a.dx = v.max(0.0) as f32;
+        }
+        if let Some(v) = f64_param(p, "dy").filter(|v| v.is_finite()) {
+            a.dy = v.max(0.0) as f32;
+        }
+        if let Some(v) = f64_param(p, "width").filter(|v| v.is_finite()) {
+            a.width = v.clamp(1.0, 10000.0) as f32;
+        }
+        if let Some(v) = f64_param(p, "height").filter(|v| v.is_finite()) {
+            a.height = v.clamp(1.0, 10000.0) as f32;
+        }
+        Ok(json!({"crop": im.crop}))
     })
 }
 

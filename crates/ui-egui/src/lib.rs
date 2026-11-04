@@ -32,6 +32,7 @@ pub mod editor;
 mod floating_pictures;
 mod metafile_picture;
 mod paste_chord;
+mod picture_crop;
 pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;
@@ -285,6 +286,8 @@ pub struct SheetApp {
     cut_text: Option<String>,
     /// Ctrl+V over a picture or copied files (egui sends no Paste event for them).
     paste_chord: paste_chord::PasteChord,
+    /// The picture in crop mode (Picture Format › Crop), by id.
+    pub(crate) crop: Option<u32>,
     /// A run of Tabs: (doc uid, sheet, column it started in, cell the last Tab landed on).
     /// Enter on that cell goes to the next row in the starting column, as in Excel (#911).
     tab_run: Option<(u64, usize, u32, CellRef)>,

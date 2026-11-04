@@ -25,7 +25,7 @@ type DetailsCache = ((u64, u64, usize, usize), Option<std::collections::HashSet<
 mod cell_paint;
 mod cursor;
 mod editor;
-mod geo;
+pub(crate) mod geo;
 mod interact;
 mod keyboard;
 mod menus;
@@ -137,6 +137,14 @@ pub enum Drag {
         start: Pos2,
         orig: (CellRef, f32, f32, f32, f32),
         resize: bool,
+    },
+    /// A crop handle of a picture in crop mode (`picture_crop`), or the picture inside its frame.
+    Crop {
+        id: u32,
+        handle: u8,
+        start: Pos2,
+        frame: crate::picture_crop::Frame,
+        crop: [f32; 4],
     },
 }
 

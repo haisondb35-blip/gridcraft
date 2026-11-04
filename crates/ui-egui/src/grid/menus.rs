@@ -380,6 +380,9 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
             if kind == "chart" {
                 items.extend([("-", ""), ("Select Data…", "ui:selectData"), ("Format Chart Area…", "ui:formatChart")]);
             }
+            if kind == "image" {
+                items.extend([("-", ""), ("Crop", "ui:crop")]);
+            }
             let lang = crate::i18n::current(ui.ctx());
             for (label, action) in items {
                 if label == "-" {
@@ -391,6 +394,11 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                     match action {
                         "ui:selectData" => app.open_dialog("selectData", json!({"chart": id})),
                         "ui:formatChart" => app.grid.pane = Some("formatChart".into()),
+                        "ui:crop" => {
+                            app.selected_chart = Some(id);
+                            app.crop = None;
+                            crate::picture_crop::toggle(app);
+                        }
                         _ => {
                             app.run_or_alert("object.delete", json!({"kind": kind, "id": id}));
                             app.selected_chart = None;
