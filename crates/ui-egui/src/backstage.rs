@@ -749,14 +749,15 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
             let shown: &[usize] = if bs.all_props { &[0, 4, 6, 1, 3, 5] } else { &[0, 4, 6] };
             for &i in shown {
                 let (Some((key, label)), Some(draft), Some(saved)) = (PROPERTIES.get(i), bs.props.get_mut(i), current.get(i)) else { continue };
-                ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
+                let caption = ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
                 let id = ui.make_persistent_id(("backstage_prop", *key));
                 // Show the workbook's value unless the field is being edited (undo, another window).
                 if !ui.ctx().memory(|m| m.has_focus(id)) {
                     draft.clone_from(saved);
                 }
                 let hint = format!("{} {}", lang.tr("Add a"), lang.tr(label).to_lowercase());
-                let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(hint).desired_width(260.0));
+                // Named by its caption, for screen readers (as upstream's Info page).
+                let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(hint).desired_width(260.0)).labelled_by(caption.id);
                 if resp.lost_focus() && draft != saved {
                     let mut params = serde_json::Map::new();
                     params.insert((*key).to_string(), json!(draft.clone()));
@@ -765,6 +766,12 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
                 ui.end_row();
             }
         });
+        // Right under the properties, as in Excel.
+        ui.add_space(4.0);
+        let label = if bs.all_props { lang.tr("Show Fewer Properties") } else { lang.tr("Show All Properties") };
+        if ui.link(label).clicked() {
+            bs.all_props = !bs.all_props;
+        }
         ui.add_space(14.0);
         section(ui, lang, "Related Dates");
         egui::Grid::new("backstage_dates").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
@@ -778,13 +785,13 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
         section(ui, lang, "Related People");
         egui::Grid::new("backstage_people").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
             let i = 2; // author
-            ui.label(RichText::new(lang.tr("Author")).color(t.text_dim));
+            let caption = ui.label(RichText::new(lang.tr("Author")).color(t.text_dim));
             if let (Some(draft), Some(saved)) = (bs.props.get_mut(i), current.get(i)) {
                 let id = ui.make_persistent_id(("backstage_prop", "author"));
                 if !ui.ctx().memory(|m| m.has_focus(id)) {
                     draft.clone_from(saved);
                 }
-                let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(lang.tr("Add an author")).desired_width(260.0));
+                let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(lang.tr("Add an author")).desired_width(260.0)).labelled_by(caption.id);
                 if resp.lost_focus() && draft != saved {
                     app.run_or_alert("file.properties", json!({"author": draft.clone()}));
                 }
@@ -804,11 +811,6 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
             }
         } else {
             dim(ui, lang.tr("Not saved yet"));
-        }
-        ui.add_space(8.0);
-        let label = if bs.all_props { lang.tr("Show Fewer Properties") } else { lang.tr("Show All Properties") };
-        if ui.link(label).clicked() {
-            bs.all_props = !bs.all_props;
         }
     });
     if let Some(id) = open_dialog {

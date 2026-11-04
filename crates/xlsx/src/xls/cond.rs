@@ -123,7 +123,7 @@ fn dxfn(c: &mut Cursor<'_, '_>, palette: &[u32; 64], num_fmt: impl Fn(u16) -> Op
     if bit(flags, 28) {
         let (a, b) = (c.u32()?, c.u32()?);
         let line = |unset: bool, dg: u32, icv: u32| {
-            let style = border_style((dg & 0x0F) as u8);
+            let style = border_style(dg & 0x0F);
             if unset || style == BorderStyle::None { BorderLine::default() } else { BorderLine { style, color: color((icv & 0x7F) as u16, palette) } }
         };
         s.borders.left = line(bit(flags, 10), a, a >> 16);
@@ -137,7 +137,7 @@ fn dxfn(c: &mut Cursor<'_, '_>, palette: &[u32; 64], num_fmt: impl Fn(u16) -> Op
         let (fore, back) = (color(p2 & 0x7F, palette), color((p2 >> 7) & 0x7F, palette));
         // An unset pattern with a colour is a solid fill; a solid fill shows its background
         // colour (the differential-format convention .xlsx shares).
-        let kind = if pattern_unset { PatternType::Solid } else { pattern(((p1 >> 10) & 0x3F) as u8) };
+        let kind = if pattern_unset { PatternType::Solid } else { pattern((p1 >> 10) & 0x3F) };
         if kind == PatternType::Solid {
             let shown = if back_unset { fore } else { back };
             if !(back_unset && fore_unset) {

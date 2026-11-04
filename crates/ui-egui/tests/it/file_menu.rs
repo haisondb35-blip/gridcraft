@@ -97,6 +97,19 @@ fn escape_leaves_file_fields_before_closing_the_view() {
         h.state_mut().run("ui.backstage", serde_json::json!({"page": page_id})).unwrap();
         h.run_steps(3);
         let role = if page_id == "print" { Role::SpinButton } else { Role::TextInput };
+        // brian-local's Info page shows Title, Keywords and Categories, the rest under Show All
+        // Properties, as Excel does.
+        // brian-local's File > Options has Excel's panes: iteration is under Formulas.
+        if page_id == "options" && h.query_by_role_and_label(role, label).is_none() {
+            h.get_by_role_and_label(Role::Button, "Formulas").click();
+            h.run_steps(2);
+        }
+        if page_id == "info" && h.query_by_role_and_label(role, label).is_none() {
+            // A link's name comes from its text, which `get_by_label` doesn't match.
+            let link = egui_kittest::kittest::By::new().predicate(|n| n.label().as_deref() == Some("Show All Properties"));
+            h.query_all(link).next().expect("Show All Properties").click();
+            h.run_steps(2);
+        }
         h.get_by_role_and_label(role, label).click();
         h.run_steps(2);
         assert!(h.ctx.text_edit_focused(), "{label} has the caret");

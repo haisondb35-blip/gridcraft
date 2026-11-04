@@ -25,7 +25,7 @@ use std::sync::Arc;
 use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
 use gridcraft_model::{
     Anchor, AnchorMode, AutoFilter, CalcMode, CalcSettings, Cell, CfRule, Comment, CondFormat, DefinedName, Formula, Image, LineInfo, Sheet, StyleId,
-    StyleTable, Visibility, Workbook,
+    Visibility, Workbook,
 };
 
 use crate::cfb::Compound;
@@ -142,10 +142,8 @@ struct Globals {
     sheets: Vec<BoundSheet>,
     date1904: bool,
     formats: HashMap<u16, String>,
-    fonts: Vec<styles::XlsFont>,
-    xfs: Vec<styles::Xf>,
-    /// A Palette record's colours (0xRRGGBB), replacing the standard ones from index 8.
-    palette: Vec<u32>,
+    /// Font, XF, Palette and Style records (upstream's `styles`).
+    styles: styles::StyleRecords,
     /// The workbook's pictures (MsoDrawingGroup's BStore), `pib` 1 first.
     blips: Vec<drawing::Blip>,
     sst: Vec<Arc<str>>,
@@ -177,18 +175,11 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
     let mut wb = Workbook::new();
     wb.sheets.clear();
     wb.date_system = if g.date1904 { DateSystem::D1904 } else { DateSystem::D1900 };
-    // One model style per XF: font, fill, borders, alignment, number format and protection.
-    let palette = styles::palette(&g.palette);
-    let style_of = |x: &styles::Xf| {
-        let code = g.formats.get(&x.format).map(String::as_str).or_else(|| builtin_format(u32::from(x.format))).unwrap_or("General");
-        styles::style(x, &g.fonts, &palette, code)
-    };
-    // The workbook's Normal look is its default cell format, XF 15 (the first XF in a file
-    // that has fewer): cells formatted like it need no style of their own.
-    if let Some(normal) = g.xfs.get(15).or_else(|| g.xfs.first()) {
-        wb.styles = StyleTable::with_default(style_of(normal));
+    // One model style per XF.
+    let styles = styles::build(&g.styles, &g.formats, &mut wb);
+    if g.styles.short {
+        report.warn("Some cell formatting records were shorter than expected; the formatting present was kept.");
     }
-    let styles: Vec<StyleId> = g.xfs.iter().map(|x| wb.styles.intern(style_of(x))).collect();
 
     // BoundSheet8 index → model sheet index.
     let mut model_index: Vec<Option<usize>> = Vec::with_capacity(g.sheets.len());
@@ -299,17 +290,10 @@ fn globals(stream: &[u8], budget: &mut Budget, report: &mut ReadReport) -> Resul
                 budget.text(code.len())?;
                 g.formats.insert(ifmt, code);
             }
-            0x00E0 => {
-                if g.xfs.len() < MAX_XFS {
-                    g.xfs.push(styles::xf(&mut c)?);
-                }
-            }
-            0x0031 => {
-                if g.fonts.len() < styles::MAX_FONTS {
-                    g.fonts.push(styles::font(&mut c)?);
-                }
-            }
-            0x0092 => g.palette = styles::palette_record(&mut c)?,
+            0x00E0 => g.styles.xf(&mut c, MAX_XFS),
+            0x0031 => g.styles.font(&mut c),
+            0x0092 => g.styles.palette(&mut c),
+            0x0293 => g.styles.style(&mut c),
             0x00EB => {
                 if dgg.len() < MAX_DRAWING {
                     dgg.extend(c.rest());
@@ -615,7 +599,7 @@ fn worksheet(
         note_texts: HashMap::new(),
         notes: vec![],
         cf_ranges: vec![],
-        palette: styles::palette(&g.palette),
+        palette: g.styles.color_table(),
         drawing: vec![],
         filtered: false,
     };
