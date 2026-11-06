@@ -2484,7 +2484,8 @@ fn ods_import_keeps_cached_values_and_reports_limits() {
         let mut s = s();
         let r = s.execute("file.open", json!({"name": name, "base64": crate::io::base64_encode(&bytes)})).unwrap();
         assert!(!r["warnings"].as_array().unwrap().is_empty());
-        assert!(s.take_ui_requests().iter().any(|r| matches!(r, crate::UiRequest::Message(_))));
+        // The warnings are in the result, for the info bar: no message box on open.
+        assert!(!s.take_ui_requests().iter().any(|r| matches!(r, crate::UiRequest::Message(_))));
         assert!(s.doc().unwrap().path.is_none());
         assert!(s.doc().unwrap().display_title().ends_with(".xlsx"));
         assert_eq!(v(&s, "A1"), Value::Number(42.0));
@@ -3463,7 +3464,8 @@ fn xlsb_import_keeps_cached_values_and_reports_limits() {
         let mut s = s();
         let r = s.execute("file.open", json!({"name": name, "base64": crate::io::base64_encode(&bytes)})).unwrap();
         assert!(!r["warnings"].as_array().unwrap().is_empty());
-        assert!(s.take_ui_requests().iter().any(|r| matches!(r, crate::UiRequest::Message(_))));
+        // The warnings are in the result, for the info bar: no message box on open.
+        assert!(!s.take_ui_requests().iter().any(|r| matches!(r, crate::UiRequest::Message(_))));
         assert!(s.doc().unwrap().path.is_none());
         assert!(s.doc().unwrap().display_title().ends_with(".xlsx"));
         assert_eq!(v(&s, "A1"), Value::Number(42.0));

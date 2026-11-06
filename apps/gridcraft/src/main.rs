@@ -19,7 +19,6 @@ mod logging;
 mod native_menu;
 mod print;
 
-
 use gridcraft_engine::Session;
 use gridcraft_ui_egui::doc_windows::DocWindows;
 use gridcraft_ui_egui::{Services, SheetApp};

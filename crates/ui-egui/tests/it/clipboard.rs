@@ -513,7 +513,13 @@ fn picture_clipboard(text: &str, picture: (&'static str, Vec<u8>)) -> (Rc<RefCel
 /// Ctrl/Cmd+V over a picture: egui swallows the press and sends no Paste, so only the release
 /// comes ([`crate`]'s `paste_chord`).
 fn press_paste_over_a_picture(h: &mut Harness) {
-    h.input_mut().events.push(Event::Key { key: egui::Key::V, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    h.input_mut().events.push(Event::Key {
+        key: egui::Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
     h.run_steps(2);
 }
 

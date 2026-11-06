@@ -199,4 +199,3 @@ pub fn sequence() -> Option<u32> {
 pub fn format_names() -> Vec<String> {
     sys::format_names()
 }
-

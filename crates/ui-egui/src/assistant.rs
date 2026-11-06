@@ -331,11 +331,9 @@ impl Assistant {
         self.input.clear();
         self.last_note = None;
         self.push(Role::User, prompt.clone());
-        let launched = self
-            .prepare(ctx)
-            .and_then(|(work_dir, mcp_config, server)| {
-                (self.launcher)(Launch { prompt, session: self.session.clone(), mcp_config, work_dir, provider: self.provider, server })
-            });
+        let launched = self.prepare(ctx).and_then(|(work_dir, mcp_config, server)| {
+            (self.launcher)(Launch { prompt, session: self.session.clone(), mcp_config, work_dir, provider: self.provider, server })
+        });
         match launched {
             Ok(r) => self.running = Some(r),
             Err(e) => self.push(Role::Error, e),
@@ -529,9 +527,7 @@ pub fn mcp_server(cli: &Path, port: u16, token: &str) -> McpServer {
 
 /// What Codex is told before the first question (it has no separate system prompt).
 pub fn codex_instructions() -> String {
-    format!(
-        "{SYSTEM_PROMPT} Use only the gridcraft tools: don't run shell commands or read or write files on the computer."
-    )
+    format!("{SYSTEM_PROMPT} Use only the gridcraft tools: don't run shell commands or read or write files on the computer.")
 }
 
 /// A TOML basic string, for Codex's `-c key=value` settings.
@@ -552,8 +548,10 @@ fn toml_str(s: &str) -> String {
 /// Codex's command-line arguments for a question (the prompt goes in on stdin, `-`): JSON
 /// events, a read-only sandbox that never asks for approval, and the gridcraft server.
 pub fn codex_args(l: &Launch) -> Vec<String> {
-    let mut a: Vec<String> =
-        ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "approval_policy=\"never\""].into_iter().map(String::from).collect();
+    let mut a: Vec<String> = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "approval_policy=\"never\""]
+        .into_iter()
+        .map(String::from)
+        .collect();
     let server = &l.server;
     a.push("-c".into());
     a.push(format!("mcp_servers.gridcraft.command={}", toml_str(&server.command.to_string_lossy())));
@@ -1321,7 +1319,10 @@ mod tests {
         assert!(a.contains(&"approval_policy=\"never\"".to_string()));
         assert!(a.contains(&r#"mcp_servers.gridcraft.command="C:\\Program Files\\App\\gridcraft-cli.exe""#.to_string()), "{a:?}");
         assert!(a.contains(&r#"mcp_servers.gridcraft.args=["mcp","--app","4242"]"#.to_string()), "{a:?}");
-        assert!(a.contains(&r#"mcp_servers.gridcraft.default_tools_approval_mode="approve""#.to_string()), "the app's tools may change the document: {a:?}");
+        assert!(
+            a.contains(&r#"mcp_servers.gridcraft.default_tools_approval_mode="approve""#.to_string()),
+            "the app's tools may change the document: {a:?}"
+        );
         assert!(a.contains(&r#"mcp_servers.gridcraft.env={GRIDCRAFT_CONTROL_TOKEN="t\"k"}"#.to_string()), "{a:?}");
         assert_eq!(a.last().map(String::as_str), Some("-"), "the prompt comes on stdin");
         assert!(!a.contains(&"resume".to_string()));

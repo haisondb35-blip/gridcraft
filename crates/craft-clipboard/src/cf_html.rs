@@ -113,7 +113,8 @@ mod tests {
 
     #[test]
     fn broken_headers_fall_back_to_the_markers_then_the_text() {
-        let lying = "Version:0.9\r\nStartHTML:-1\r\nEndHTML:-1\r\nStartFragment:99999\r\nEndFragment:3\r\n<p><!--StartFragment-->hi<!--EndFragment--></p>";
+        let lying =
+            "Version:0.9\r\nStartHTML:-1\r\nEndHTML:-1\r\nStartFragment:99999\r\nEndFragment:3\r\n<p><!--StartFragment-->hi<!--EndFragment--></p>";
         assert_eq!(decode(lying.as_bytes()).unwrap().fragment, "hi");
         assert_eq!(decode(b"<b>bare</b>").unwrap().fragment, "<b>bare</b>");
         // Offsets inside a multi-byte character are refused, not sliced.

@@ -1043,7 +1043,6 @@ pub fn image_size(data: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
-
 /// Record a save in the core properties: modified now, by `user`; created now if the file never
 /// said (a new workbook).
 pub fn stamp_saved(props: &mut gridcraft_model::DocProps, user: &str, now: &str) {

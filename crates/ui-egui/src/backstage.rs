@@ -791,7 +791,8 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
                 if !ui.ctx().memory(|m| m.has_focus(id)) {
                     draft.clone_from(saved);
                 }
-                let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(lang.tr("Add an author")).desired_width(260.0)).labelled_by(caption.id);
+                let resp =
+                    ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(lang.tr("Add an author")).desired_width(260.0)).labelled_by(caption.id);
                 if resp.lost_focus() && draft != saved {
                     app.run_or_alert("file.properties", json!({"author": draft.clone()}));
                 }

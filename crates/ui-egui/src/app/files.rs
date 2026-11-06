@@ -41,7 +41,8 @@ impl SheetApp {
             self.notice = None;
             return;
         }
-        let vba: Vec<&str> = msgs.iter().copied().filter(|m| m.to_lowercase().contains("macro") || m.contains("VBA")).collect();
+        // A VBA project, not any mention of macros: ".xls: Macro names were skipped" is not one.
+        let vba: Vec<&str> = msgs.iter().copied().filter(|m| m.contains("VBA")).collect();
         if !vba.is_empty() {
             // The reader says "dropped" when the VBA project was missing or unreadable; never promise to keep it then.
             let dropped = vba.iter().any(|m| m.contains("dropped"));

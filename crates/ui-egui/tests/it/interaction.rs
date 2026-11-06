@@ -1436,6 +1436,19 @@ fn dropped_macro_warning_never_promises_to_keep_macros() {
     assert!(h.state().notice.clone().unwrap().text.contains("keeps them when you save as .xlsm"));
 }
 
+/// An .xls import's summary and "Macro names were skipped" are an info notice, not the VBA one
+/// (the reader names no VBA project), and opening shows no message box.
+#[test]
+fn xls_import_summary_is_an_info_notice() {
+    let mut h = harness(blank());
+    let warnings = ["Imported from an Excel 97-2003 (.xls) workbook: values were read.", "Macro names were skipped."];
+    h.state_mut().show_open_warnings(&json!({ "warnings": warnings }));
+    let n = h.state().notice.clone().expect("a notice");
+    assert_eq!(n.kind, gridcraft_ui_egui::NoticeKind::Info);
+    assert!(!n.text.contains("VBA"), "{}", n.text);
+    assert!(h.state().message.is_none(), "no message box");
+}
+
 #[test]
 fn plain_open_warning_becomes_an_info_notice() {
     let mut h = harness(blank());

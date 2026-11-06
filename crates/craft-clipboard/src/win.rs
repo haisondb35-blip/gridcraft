@@ -51,7 +51,9 @@ pub fn write(copy: &Copy) -> Result<(), String> {
             result = r;
         }
     };
-    let mut put = |name: &str, data: &[u8]| set(id(name).ok_or_else(|| format!("can't register {name}")).and_then(|f| raw::set_without_clear(f, data).map_err(err)));
+    let mut put = |name: &str, data: &[u8]| {
+        set(id(name).ok_or_else(|| format!("can't register {name}")).and_then(|f| raw::set_without_clear(f, data).map_err(err)))
+    };
     if let Some(h) = &html {
         put(HTML, h);
     }

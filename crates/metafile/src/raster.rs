@@ -213,7 +213,8 @@ fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
         let (fi, gid) = match glyph_of(&main, c) {
             Some(g) => (0, g),
             None => {
-                let fallback = ["Arial", "Segoe UI", "Tahoma"].iter().find_map(|f| installed_face(f, bold, italic).filter(|d| glyph_of(d, c).is_some()));
+                let fallback =
+                    ["Arial", "Segoe UI", "Tahoma"].iter().find_map(|f| installed_face(f, bold, italic).filter(|d| glyph_of(d, c).is_some()));
                 match fallback.and_then(|d| glyph_of(&d, c).map(|g| (d, g))) {
                     Some((d, g)) => {
                         faces.push(d);
