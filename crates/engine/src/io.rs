@@ -933,8 +933,26 @@ pub fn read_file(path: &str) -> Result<Vec<u8>> {
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
 }
 
+/// Changes the bytes of a file about to be saved, or None to keep them: the desktop app's Save
+/// chat with file (the assistant's conversation, written into the file).
+pub type SaveHook = Box<dyn Fn(&str, &[u8]) -> Option<Vec<u8>> + Send + Sync>;
+
+static SAVE_HOOK: std::sync::OnceLock<SaveHook> = std::sync::OnceLock::new();
+
+/// Sets the [`SaveHook`] (once per run).
+pub fn set_save_hook(hook: SaveHook) {
+    let _ = SAVE_HOOK.set(hook);
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn hooked(path: &str, bytes: &[u8]) -> Option<Vec<u8>> {
+    SAVE_HOOK.get().and_then(|h| h(path, bytes))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
+    let hooked = hooked(path, bytes);
+    let bytes = hooked.as_deref().unwrap_or(bytes);
     use std::io::Write;
     script_sandbox_check(path)?;
     // Write to a temporary file, then rename: a crash never leaves a half-written workbook.

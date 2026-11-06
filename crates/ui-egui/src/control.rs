@@ -513,6 +513,8 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
 
 /// Drains queued control requests, drops requests whose client stopped waiting, handles immediate outcomes and admits screenshots, then requests a repaint while synthetic input remains.
 pub fn poll(app: &mut SheetApp, ctx: &egui::Context) {
+    // Open from the start and listed for the other Craft apps (once).
+    app.assistant.share(ctx);
     // The Claude pane's own channel, then the `--control` one.
     if let Some(rx) = app.assistant.control_rx.take() {
         drain(app, ctx, &rx);

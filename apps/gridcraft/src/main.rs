@@ -371,7 +371,11 @@ fn main() -> eframe::Result<()> {
                 SheetApp::setup_context_for_language(&cc.egui_ctx, app.ui.dark, app.ui.language);
                 // Each file's conversation with the assistant is remembered, in the folder all the
                 // Craft apps share (ArtCraft/AI).
-                app.assistant.memory = if prefs_enabled() { gridcraft_ui_egui::assistant::Store::shared() } else { None };
+                app.assistant.use_memory(if prefs_enabled() { gridcraft_ui_egui::assistant::Store::shared() } else { None });
+                // Save chat with file: the workbook's conversation goes into it as it is saved, and comes back.
+                app.assistant.embedded_reader = Some(gridcraft_ui_egui::assistant::embed::read);
+                let shelf = app.assistant.shelf.clone();
+                gridcraft_engine::io::set_save_hook(Box::new(move |path, bytes| gridcraft_ui_egui::assistant::embed::hook(&shelf, path, bytes)));
                 // The Claude pane opens a channel of its own when first asked: a free port, its token.
                 app.assistant.starter = Some(Box::new(|ctx, token| control_server::start_with(0, ctx.clone(), Some(token.to_string())).ok()));
                 if let Some(port) = control_port {
