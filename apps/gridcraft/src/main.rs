@@ -369,6 +369,9 @@ fn main() -> eframe::Result<()> {
                     return Err("the app was already created".into());
                 };
                 SheetApp::setup_context_for_language(&cc.egui_ctx, app.ui.dark, app.ui.language);
+                // Each file's conversation with the assistant is remembered, in the folder all the
+                // Craft apps share (ArtCraft/AI).
+                app.assistant.memory = if prefs_enabled() { gridcraft_ui_egui::assistant::Store::shared() } else { None };
                 // The Claude pane opens a channel of its own when first asked: a free port, its token.
                 app.assistant.starter = Some(Box::new(|ctx, token| control_server::start_with(0, ctx.clone(), Some(token.to_string())).ok()));
                 if let Some(port) = control_port {
