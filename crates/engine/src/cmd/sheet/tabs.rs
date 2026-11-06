@@ -146,6 +146,19 @@ pub(super) fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let i = target_sheet(s, p)?;
     let copy = bool_param(p, "copy").unwrap_or(false);
+    // To book: another open workbook (its `uid`) or "new", as Excel's Move or Copy offers.
+    if let Some(book) = p.get("book").filter(|b| !b.is_null()) {
+        let new = book.as_str() == Some("new");
+        let target = match book.as_u64() {
+            Some(uid) => Some(s.document_index(uid).ok_or_else(|| bad("sheet.move", "no open workbook has that `book`"))?),
+            None if new => None,
+            None => return Err(bad("sheet.move", "`book` is a workbook's uid or \"new\"")),
+        };
+        if new || target != Some(s.active_index()) {
+            let to = p.get("to").and_then(Json::as_u64).map(|v| v as usize);
+            return move_to_book(s, i, copy, target, to);
+        }
+    }
     let to = p.get("to").and_then(Json::as_u64).map(|v| v as usize).ok_or_else(|| bad("sheet.move", "missing `to`"))?;
     edit(s, |cx| {
         let n = cx.wb.sheets.len();
@@ -294,4 +307,127 @@ pub(super) fn step_sheet(s: &mut Session, dir: isize) -> Result<Json> {
     }
     // No visible sheet in this direction: keep the current sheet and its selection.
     ok()
+}
+
+/// A name not yet used by a sheet of `wb`: `name`, else `name (2)`, `(3)`… shortened to fit
+/// Excel's 31 characters.
+fn free_sheet_name(wb: &gridcraft_model::Workbook, name: &str) -> String {
+    if wb.sheet_index(name).is_none() {
+        return name.to_string();
+    }
+    (2..)
+        .map(|k| {
+            let suffix = format!(" ({k})");
+            let keep = 31usize.saturating_sub(suffix.chars().count());
+            format!("{}{suffix}", name.chars().take(keep).collect::<String>().trim_end())
+        })
+        .find(|nm| wb.sheet_index(nm).is_none())
+        .unwrap_or_else(|| name.to_string())
+}
+
+/// Move or Copy to another workbook (`target`, an index in [`Session::documents`]) or to a new
+/// one (`None`), before its sheet `to` (the end when `None`), as Excel does: the sheet keeps its
+/// look (its styles are added to the other workbook's style table), its objects and tables get
+/// ids free there, table names stay unique there, and its sheet-level names come along. Moving
+/// takes it out of this workbook (refused when it is the last visible sheet). Each workbook gets
+/// its own undo step; the target becomes active.
+fn move_to_book(s: &mut Session, i: usize, copy: bool, target: Option<usize>, to: Option<usize>) -> Result<Json> {
+    let src = s.doc()?;
+    if !copy {
+        if src.wb.protected_structure {
+            return Err(EngineError::Other("The workbook is protected and cannot be changed.".into()));
+        }
+        if src.wb.sheets.iter().filter(|sh| sh.visibility == Visibility::Visible).count() <= 1 {
+            return Err(EngineError::Other("A workbook must contain at least one visible worksheet.".into()));
+        }
+    }
+    let Some(sheet) = src.wb.sheets.get(i).cloned() else { return Err(bad("sheet.move", "no such sheet")) };
+    let styles = src.wb.styles.clone();
+    let names: Vec<gridcraft_model::DefinedName> = src.wb.names.iter().filter(|nm| nm.scope == Some(i)).cloned().collect();
+    let source = s.active_index();
+    // A new workbook is made here.
+    let (t, blank) = match target {
+        Some(t) => (t, false),
+        None => (s.new_workbook(), true),
+    };
+    let Some(d) = s.docs.get_mut(t) else { return Err(bad("sheet.move", "no such workbook")) };
+    if d.wb.protected_structure {
+        return Err(EngineError::Other("The destination workbook is protected and cannot be changed.".into()));
+    }
+    let at = edit_doc(d, |cx| {
+        if blank {
+            // A new workbook holds just the sheet, as in Excel: its blank first sheet goes.
+            cx.wb.sheets.clear();
+        }
+        let mut sh = (*sheet).clone();
+        sh.uid = gridcraft_model::SheetUid::fresh();
+        sh.name = free_sheet_name(&cx.wb, &sh.name);
+        sh.preserved = None; // kept file content stays with its workbook
+        // Styles: the same look, as styles of this workbook.
+        let mut map: std::collections::HashMap<gridcraft_model::StyleId, gridcraft_model::StyleId> = std::collections::HashMap::new();
+        let mut restyle = |id: gridcraft_model::StyleId, table: &mut gridcraft_model::StyleTable| {
+            if id == gridcraft_model::StyleId::DEFAULT {
+                return id;
+            }
+            *map.entry(id).or_insert_with(|| table.intern(styles.get(id).clone()))
+        };
+        let cells: Vec<(CellRef, gridcraft_model::StyleId)> = sh.cells.iter().map(|(c, x)| (c, x.style)).collect();
+        for (c, id) in cells {
+            let new = restyle(id, &mut cx.wb.styles);
+            if new != id {
+                sh.set_style(c, new);
+            }
+        }
+        for line in sh.cols.values_mut().chain(sh.rows.values_mut()) {
+            if let Some(id) = line.style {
+                line.style = Some(restyle(id, &mut cx.wb.styles));
+            }
+        }
+        // Object and table ids are unique within a workbook.
+        let count = sh.charts.len() + sh.images.len() + sh.shapes.len() + sh.slicers.len() + sh.controls.len() + sh.tables.len();
+        let ids = cx.wb.free_object_ids(count);
+        if ids.len() < count {
+            return Err(bad("sheet.move", "no free object ids are left in that workbook"));
+        }
+        let mut ids = ids.into_iter();
+        let mut fresh = || ids.next().unwrap_or(u32::MAX);
+        sh.charts.iter_mut().for_each(|o| o.id = fresh());
+        sh.images.iter_mut().for_each(|o| o.id = fresh());
+        sh.shapes.iter_mut().for_each(|o| o.id = fresh());
+        sh.slicers.iter_mut().for_each(|o| o.id = fresh());
+        sh.controls.iter_mut().for_each(|o| o.id = fresh());
+        sh.tables.iter_mut().for_each(|o| o.id = fresh());
+        // Table names are unique within a workbook: `Table1` becomes `Table1_2` on a clash.
+        let taken: std::collections::HashSet<String> = cx.wb.sheets.iter().flat_map(|s| s.tables.iter().map(|t| t.name.to_lowercase())).collect();
+        for t in &mut sh.tables {
+            if taken.contains(&t.name.to_lowercase()) {
+                let base = t.name.clone();
+                t.name = (2..).map(|k| format!("{base}_{k}")).find(|n| !taken.contains(&n.to_lowercase())).unwrap_or(base);
+            }
+        }
+        let at = to.unwrap_or(cx.wb.sheets.len()).min(cx.wb.sheets.len());
+        for nm in cx.wb.names.iter_mut() {
+            if let Some(sc) = nm.scope.as_mut()
+                && *sc >= at
+            {
+                *sc += 1;
+            }
+        }
+        cx.wb.names.extend(names.iter().cloned().map(|nm| gridcraft_model::DefinedName { scope: Some(at), ..nm }));
+        cx.wb.sheets.insert(at, Arc::new(sh));
+        cx.wb.set_active_sheet(at);
+        *cx.sel = crate::Selection::default();
+        cx.structural = true;
+        Ok(at)
+    })?;
+    if let Some(d) = s.docs.get_mut(t) {
+        d.sheet_selections.resize(d.wb.sheets.len(), crate::Selection::default());
+    }
+    if !copy {
+        s.set_active(source);
+        delete_sheet(s, &json!({"sheet": i}))?;
+    }
+    s.set_active(t);
+    let uid = s.docs.get(t).map(|d| d.uid);
+    Ok(json!({"book": uid, "index": at}))
 }

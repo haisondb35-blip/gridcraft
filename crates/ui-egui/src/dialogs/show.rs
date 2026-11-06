@@ -189,6 +189,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "insertFunction" => insert_function(app, ui, &mut d, &mut confirm),
                 "find" => find(app, ui, &mut d),
                 "goTo" => go_to(app, ui, &mut d, &mut confirm),
+                "moveSheet" => super::move_sheet::move_sheet(app, ui, &mut d, &mut confirm, &mut open),
                 "zoom" => zoom(ui, &mut d, &mut confirm, &mut open),
                 "sort" => sort(app, ui, &mut d, &mut confirm),
                 "nameManager" => name_manager(app, ui, &mut d, &mut open),

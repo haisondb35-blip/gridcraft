@@ -6144,3 +6144,40 @@ fn pivot_new_sheet_destination_respects_workbook_structure_protection() {
     }
     assert!(s.execute("insert.pivotTable", json!({"source": "A1:B3", "location": "New"})).is_err());
 }
+
+#[test]
+fn move_or_copy_reaches_another_workbook_or_a_new_one() {
+    // Excel's Move or Copy › To book: the sheet keeps its look in the other workbook.
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Tiền lương"]]})).unwrap();
+    s.execute("home.fillColor", json!({"range": "A1", "color": "#FEDCBA"})).unwrap();
+    s.execute("home.insertSheet", json!({})).unwrap();
+    let style = |d: &crate::DocState, i: usize| d.wb.styles.get(d.wb.sheets[i].style_id(CellRef::parse("A1").unwrap())).clone();
+    let look = style(s.doc().unwrap(), 0);
+    let source = s.active_index();
+    let other = s.new_workbook();
+    let other_uid = s.documents()[other].uid;
+    s.set_active(source);
+    let first = s.doc().unwrap().wb.sheets[0].name.clone();
+    // Copy to the other open workbook, before its first sheet.
+    let r = s.execute("sheet.move", json!({"sheet": 0, "copy": true, "book": other_uid, "to": 0})).unwrap();
+    assert_eq!(r["book"], other_uid);
+    assert_eq!(s.active_index(), other);
+    let d = &s.documents()[other];
+    assert_eq!(d.wb.sheets.len(), 2);
+    assert_eq!(d.wb.sheets[0].name, format!("{first} (2)"));
+    assert_eq!(d.wb.sheets[0].cells.get(CellRef::parse("A1").unwrap()).map(|c| c.value.clone()), Some(Value::Text("Tiền lương".into())));
+    assert_eq!(style(d, 0), look);
+    assert_eq!(s.documents()[source].wb.sheets.len(), 2, "a copy leaves the source alone");
+    // Move to a new book: it holds just the sheet, and the source loses it.
+    s.set_active(source);
+    s.execute("sheet.move", json!({"sheet": 0, "book": "new"})).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(d.wb.sheets.len(), 1);
+    assert_eq!(d.wb.sheets[0].name, first);
+    assert_eq!(style(d, 0), look);
+    assert_eq!(s.documents()[source].wb.sheets.len(), 1);
+    // The last sheet cannot move out.
+    s.set_active(source);
+    assert!(s.execute("sheet.move", json!({"sheet": 0, "book": other_uid})).is_err());
+}

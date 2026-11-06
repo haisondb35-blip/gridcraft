@@ -601,6 +601,12 @@ fn assert_drawing_and_chart_roundtrip(a: &Sheet, b: &Sheet) {
     for (x, y) in a.shapes.iter().zip(&b.shapes) {
         assert_eq!((x.kind, &x.text, x.fill, x.line, &x.format), (y.kind, &y.text, y.fill, y.line, &y.format));
     }
+    assert_charts_roundtrip(a, b);
+}
+
+/// The charts of `a` read back from `b`: kind, titles, legend, labels, series and size.
+fn assert_charts_roundtrip(a: &Sheet, b: &Sheet) {
+    let close = |x: f32, y: f32| (x - y).abs() < 0.01;
     assert_eq!(b.charts.len(), a.charts.len());
     for (x, y) in a.charts.iter().zip(&b.charts) {
         assert_eq!(y.kind, x.kind, "chart kind");

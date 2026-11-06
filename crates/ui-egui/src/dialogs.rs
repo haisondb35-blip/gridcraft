@@ -22,6 +22,7 @@ mod data;
 mod find;
 mod format_cells;
 mod insert_function;
+mod move_sheet;
 mod names;
 mod paste;
 mod ref_edit;
@@ -351,18 +352,10 @@ impl Dialog {
                 json!({"name": app.session.active().and_then(|d| d.wb.active().map(|s| s.name.clone()))}),
             ),
             "moveSheet" => {
-                let sheets: Vec<String> = app.session.active().map(|d| d.wb.sheets.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
-                let mut d = Dialog::form(
-                    "moveSheet",
-                    "Move or Copy",
-                    "sheet.move",
-                    vec![
-                        Number { key: "to", label: "Before sheet (position, 0 = first):" },
-                        Check { key: "copy", label: "Create a copy" },
-                        Note(format!("Sheets: {}", sheets.join(", "))),
-                    ],
-                    json!({"to": 0, "copy": false}),
-                );
+                // Its own body (dialogs/move_sheet.rs), as Excel's: To book, Before sheet, Create a copy.
+                let book = app.session.active().map(|d| d.uid);
+                let mut d = Dialog::form("moveSheet", "Move or Copy", "sheet.move", vec![], json!({"copy": false, "book": book}));
+                d.command = None;
                 if let Some(s) = params.get("sheet") {
                     d.values.insert("sheet".into(), s.clone());
                 }
