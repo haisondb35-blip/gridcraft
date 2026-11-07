@@ -10,6 +10,7 @@
 //!
 //! Copying anywhere else replaces everything at once, so a Paste never mixes two copies.
 //! On macOS and Linux the clipboard is reached through `arboard`: text, HTML, a bitmap and files.
+//! The web build has none of its own (`none.rs`).
 //!
 //! This crate is the same in every Craft app (`crates/craft-clipboard`); change it in one place and
 //! copy it to the others.
@@ -17,14 +18,18 @@
 mod cf_html;
 pub mod dib;
 pub mod media;
-#[cfg(not(windows))]
+#[cfg(target_arch = "wasm32")]
+mod none;
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 mod portable;
 #[cfg(windows)]
 mod win;
 
 use std::path::PathBuf;
 
-#[cfg(not(windows))]
+#[cfg(target_arch = "wasm32")]
+use none as sys;
+#[cfg(not(any(windows, target_arch = "wasm32")))]
 use portable as sys;
 #[cfg(windows)]
 use win as sys;

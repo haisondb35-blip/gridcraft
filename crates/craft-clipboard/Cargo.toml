@@ -12,7 +12,7 @@ log = "0.4"
 [target.'cfg(windows)'.dependencies]
 clipboard-win = { version = "5.4", features = ["std"] }
 
-[target.'cfg(not(windows))'.dependencies]
+[target.'cfg(not(any(windows, target_arch = "wasm32")))'.dependencies]
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
 
 [lints]
