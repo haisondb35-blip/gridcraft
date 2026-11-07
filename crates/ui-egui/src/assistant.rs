@@ -104,6 +104,7 @@ impl Provider {
 
     /// The PowerShell that installs it with its maker's own installer: Anthropic's for Claude
     /// Code, npm's package for Codex (when Node.js is there). `None`: open the download page.
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn install_script(self) -> Option<&'static str> {
         match self {
             Provider::Claude => Some("irm https://claude.ai/install.ps1 | iex"),
