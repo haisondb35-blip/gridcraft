@@ -26,6 +26,10 @@ impl Class {
 /// The layering table (AGENTS.md "Layering", plan/architecture.md). Names are package names
 /// without the `gridcraft-` prefix.
 pub const TABLE: &[(&str, Class)] = &[
+    // WMF/EMF reader (ported from DeckCraft): a leaf, used by the engine and the UI.
+    ("metafile", Class::Layer(0)),
+    // The system clipboard shared by every Craft app: a leaf, used only by the app.
+    ("craft-clipboard", Class::Layer(0)),
     ("core", Class::Layer(0)),
     ("numfmt", Class::Layer(0)),
     ("pdf", Class::Layer(0)),
