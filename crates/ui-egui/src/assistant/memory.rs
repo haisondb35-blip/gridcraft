@@ -321,6 +321,19 @@ impl Store {
             let _ = std::fs::write(self.dir.join("settings.json"), v.to_string());
         }
     }
+
+    /// The assistant last chosen in any Craft app (`Provider::key`).
+    pub fn provider_choice(&self) -> Option<String> {
+        self.settings().get("provider").and_then(Value::as_str).map(str::to_string)
+    }
+
+    pub fn set_provider_choice(&self, key: &str) {
+        let mut v = self.settings();
+        v["provider"] = json!(key);
+        if std::fs::create_dir_all(&self.dir).is_ok() {
+            let _ = std::fs::write(self.dir.join("settings.json"), v.to_string());
+        }
+    }
 }
 
 impl super::Assistant {
@@ -486,6 +499,18 @@ mod tests {
         let d = std::env::temp_dir().join(format!("craft-assistant-memory-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn the_assistant_chosen_is_remembered_beside_save_with_file() {
+        let d = scratch("provider");
+        let s = Store::new(&d);
+        assert_eq!(s.provider_choice(), None);
+        s.set_save_with_file(true);
+        s.set_provider_choice("ollama");
+        assert_eq!(s.provider_choice().as_deref(), Some("ollama"));
+        assert!(s.save_with_file(), "one choice doesn't lose the other");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

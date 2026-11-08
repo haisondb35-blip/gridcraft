@@ -279,6 +279,8 @@ pub struct Assistant {
     pub api: api::Config,
     /// Its settings are open above the conversation.
     pub api_open: bool,
+    /// The assistant last chosen was read from the shared settings.
+    provider_read: bool,
 }
 
 impl Default for Assistant {
@@ -308,6 +310,7 @@ impl Default for Assistant {
             login_rx: None,
             api: api::Config::default(),
             api_open: false,
+            provider_read: false,
         }
     }
 }
@@ -1357,12 +1360,16 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
     }
     a.poll(ui.ctx());
     a.poll_login();
-    if a.login == Login::Unchecked {
-        // The choice is remembered with the window's other settings.
-        let saved = ui.ctx().data_mut(|d| d.get_persisted::<String>(egui::Id::unique("assistant_provider")));
-        if let Some(p) = saved.as_deref().and_then(Provider::from_key) {
+    if !a.provider_read {
+        // The assistant last chosen in any Craft app (ArtCraft/AI/settings.json), read once: a
+        // later sign-in check doesn't take back a choice made since.
+        a.provider_read = true;
+        if let Some(p) = a.memory.as_ref().and_then(Store::provider_choice).as_deref().and_then(Provider::from_key) {
             a.provider = p;
+            a.load_api();
         }
+    }
+    if a.login == Login::Unchecked {
         if a.api.url.is_empty() {
             a.load_api();
         }
@@ -1380,12 +1387,15 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
         });
         if chosen != a.provider {
             a.set_provider(chosen);
-            ui.ctx().data_mut(|d| d.insert_persisted(egui::Id::unique("assistant_provider"), chosen.key().to_string()));
+            if let Some(store) = &a.memory {
+                store.set_provider_choice(chosen.key());
+            }
         }
         let (text, sign_in) = match &a.login {
             Login::Unchecked | Login::Checking => ("Checking sign-in…".to_string(), false),
             Login::SignedIn(who) if a.provider.is_api() => (format!("Ready: {who}"), false),
             Login::SignedIn(who) => (format!("Signed in: {who}"), false),
+            Login::SignedOut if a.provider.is_api() => ("No key yet".to_string(), true),
             Login::SignedOut => ("Not signed in".to_string(), true),
             Login::Missing => ("Not installed".to_string(), false),
             Login::Unknown(_) => ("Sign-in unknown".to_string(), true),
