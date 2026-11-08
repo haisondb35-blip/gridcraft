@@ -93,7 +93,7 @@ pub fn sync_now() {
 
 /// Every frame: the background sync when it is due, the open workbook's cloud copies when another
 /// workbook comes on screen, and a version or copy chosen on the settings page.
-pub(crate) fn tick(app: &mut SheetApp) {
+pub(crate) fn tick(app: &mut SheetApp, ctx: &egui::Context) {
     if cfg!(target_arch = "wasm32") {
         return;
     }
@@ -101,15 +101,20 @@ pub(crate) fn tick(app: &mut SheetApp) {
         app.open_path(&p.to_string_lossy());
     }
     let now = crate::monotonic_ms();
-    let due = with(|s| {
-        let due = s.settings.enabled && s.last_run.map_or(now >= FIRST_MS, |t| now - t >= EVERY_MS);
+    let (due, wait) = with(|s| {
+        let next = s.last_run.map_or(FIRST_MS, |t| t + EVERY_MS);
+        let due = s.settings.enabled && now >= next;
         if due {
             s.last_run = Some(now);
         }
-        due
+        (due, s.settings.enabled.then(|| if due { EVERY_MS } else { next - now }))
     });
     if due {
         sync_now();
+    }
+    // A window nobody touches draws no frames: ask for one when the next run is due.
+    if let Some(ms) = wait {
+        ctx.request_repaint_after(std::time::Duration::from_millis(ms.max(0.0) as u64));
     }
     let path = app.session.active().and_then(|d| d.path.clone());
     let changed = with(|s| {

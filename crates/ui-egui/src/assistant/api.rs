@@ -395,6 +395,12 @@ mod native {
             let reply = post(cfg, label, &history, &tools)?;
             history.push(reply.message.clone());
             if reply.calls.is_empty() {
+                // Small local models sometimes only think, then stop without a word or a tool call.
+                if reply.text.is_empty() {
+                    return Err(format!(
+                        "{label} finished without an answer: the model may be too small to use the app's tools. Try a larger model (Settings)."
+                    ));
+                }
                 keep(&id, &history);
                 let _ = tx.send(Event::Answer(reply.text));
                 let _ = tx.send(Event::Done(None));

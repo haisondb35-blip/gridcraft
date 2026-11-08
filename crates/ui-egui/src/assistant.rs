@@ -68,6 +68,17 @@ pub enum Provider {
 impl Provider {
     pub const ALL: [Provider; 5] = [Provider::Claude, Provider::Codex, Provider::Ollama, Provider::OpenAi, Provider::Gemini];
 
+    /// What the pane calls it in a sentence ("Ask Claude…").
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Claude => "Claude",
+            Provider::Codex => "ChatGPT",
+            Provider::Ollama => "Ollama",
+            Provider::OpenAi => "the model",
+            Provider::Gemini => "Gemini",
+        }
+    }
+
     /// Reached over HTTP by the pane itself ([`api`]): no program to install or sign in to.
     pub fn is_api(self) -> bool {
         matches!(self, Provider::Ollama | Provider::OpenAi | Provider::Gemini)
@@ -1373,6 +1384,7 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
         }
         let (text, sign_in) = match &a.login {
             Login::Unchecked | Login::Checking => ("Checking sign-in…".to_string(), false),
+            Login::SignedIn(who) if a.provider.is_api() => (format!("Ready: {who}"), false),
             Login::SignedIn(who) => (format!("Signed in: {who}"), false),
             Login::SignedOut => ("Not signed in".to_string(), true),
             Login::Missing => ("Not installed".to_string(), false),
@@ -1418,9 +1430,13 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     let input_h = 96.0;
     let list_h = (ui.available_height() - input_h).max(80.0);
+    let name = a.provider.name();
     egui::ScrollArea::vertical().max_height(list_h).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
         if a.messages.is_empty() {
-            ui.label(egui::RichText::new("Ask Claude to enter or fix data, write formulas, make charts, or check the workbook. Changes appear in the sheet as Claude makes them and can be undone.").color(t.text_dim));
+            let intro = format!(
+                "Ask {name} to enter or fix data, write formulas, make charts, or check the workbook. Changes appear in the sheet as they are made and can be undone."
+            );
+            ui.label(egui::RichText::new(intro).color(t.text_dim));
         }
         for (i, m) in a.messages.iter().enumerate() {
             match m.role {
@@ -1450,13 +1466,14 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
         if a.busy() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(egui::RichText::new("Claude is working…").color(t.text_dim));
+                ui.label(egui::RichText::new(format!("{name} is working…")).color(t.text_dim));
             });
         }
     });
     ui.separator();
     let busy = a.busy();
-    let edit = egui::TextEdit::multiline(&mut a.input).hint_text("Ask Claude…").desired_rows(2).desired_width(f32::INFINITY);
+    let ask = format!("Ask {name}…");
+    let edit = egui::TextEdit::multiline(&mut a.input).hint_text(ask).desired_rows(2).desired_width(f32::INFINITY);
     let resp = ui.add_enabled(!busy, edit);
     let enter = resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
     if enter {
