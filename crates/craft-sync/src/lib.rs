@@ -11,6 +11,7 @@
 //!   folder the same, newest file wins, nothing deleted.
 //! - [`versions`]: before a save replaces a file, the file as it was is kept among its earlier
 //!   versions (at most one every few minutes, the newest few).
+//! - [`background`]: the thread that runs the mirror every few minutes while an app runs.
 //! - [`settings`]: whether syncing is on, the folder, how many versions to keep (`ArtCraft/sync.json`
 //!   in the system's settings folder, shared by every Craft app).
 //!
@@ -22,6 +23,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod background;
 pub mod cloud;
 pub mod mirror;
 pub mod settings;

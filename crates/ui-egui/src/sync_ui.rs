@@ -13,7 +13,6 @@
 //! of its own and syncs nothing.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use craft_sync::Settings;
@@ -22,19 +21,11 @@ use egui::{RichText, Ui};
 use crate::SheetApp;
 use crate::theme::{self, Tokens};
 
-/// Between two mirror runs.
-const EVERY_MS: f64 = 5.0 * 60.0 * 1000.0;
-/// The first run, this long after the app starts.
-const FIRST_MS: f64 = 5_000.0;
 /// The most versions listed on the settings page.
 const MAX_LISTED: usize = 15;
 
 struct State {
     settings: Settings,
-    /// When the last run started (`monotonic_ms`); none before the first.
-    last_run: Option<f64>,
-    /// What the last finished run did, in words.
-    report: Option<String>,
     /// The workbook last looked at for cloud copies.
     checked: Option<String>,
     /// The folder being typed on the settings page.
@@ -44,13 +35,9 @@ struct State {
     open: Option<PathBuf>,
 }
 
-/// A mirror run is going on.
-static RUNNING: AtomicBool = AtomicBool::new(false);
-
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
-    let state = STATE
-        .get_or_init(|| Mutex::new(State { settings: Settings::load(), last_run: None, report: None, checked: None, folder_text: None, open: None }));
+    let state = STATE.get_or_init(|| Mutex::new(State { settings: Settings::load(), checked: None, folder_text: None, open: None }));
     f(&mut state.lock().unwrap_or_else(PoisonError::into_inner))
 }
 
@@ -69,52 +56,20 @@ pub fn before_save(path: &str) {
     }
 }
 
-/// Mirror the shared AI folder with the cloud folder now, in the background (once at a time).
+/// Mirror the shared AI folder with the cloud folder now (the thread `craft_sync::background`
+/// runs, started with the assistant's memory, does it every few minutes anyway).
 pub fn sync_now() {
-    let s = settings();
-    let (Some(local), Some(remote)) = (craft_sync::settings::base_dir().map(|d| d.join("AI")), s.sync_root().map(|d| d.join("AI"))) else {
-        return;
-    };
-    if RUNNING.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    let spawned = std::thread::Builder::new().name("craft-sync".into()).spawn(move || {
-        let report = craft_sync::mirror::mirror(&local, &remote, &craft_sync::mirror::ai_files);
-        for e in &report.errors {
-            log::warn!("sync: {e}");
-        }
-        with(|s| s.report = Some(report.summary()));
-        RUNNING.store(false, Ordering::Release);
-    });
-    if spawned.is_err() {
-        RUNNING.store(false, Ordering::Release);
-    }
+    craft_sync::background::sync_now();
 }
 
-/// Every frame: the background sync when it is due, the open workbook's cloud copies when another
-/// workbook comes on screen, and a version or copy chosen on the settings page.
-pub(crate) fn tick(app: &mut SheetApp, ctx: &egui::Context) {
+/// Every frame: the open workbook's cloud copies when another workbook comes on screen, and a
+/// version or copy chosen on the settings page.
+pub(crate) fn tick(app: &mut SheetApp) {
     if cfg!(target_arch = "wasm32") {
         return;
     }
     if let Some(p) = with(|s| s.open.take()) {
         app.open_path(&p.to_string_lossy());
-    }
-    let now = crate::monotonic_ms();
-    let (due, wait) = with(|s| {
-        let next = s.last_run.map_or(FIRST_MS, |t| t + EVERY_MS);
-        let due = s.settings.enabled && now >= next;
-        if due {
-            s.last_run = Some(now);
-        }
-        (due, s.settings.enabled.then_some(if due { EVERY_MS } else { next - now }))
-    });
-    if due {
-        sync_now();
-    }
-    // A window nobody touches draws no frames: ask for one when the next run is due.
-    if let Some(ms) = wait {
-        ctx.request_repaint_after(std::time::Duration::from_millis(ms.max(0.0) as u64));
     }
     let path = app.session.active().and_then(|d| d.path.clone());
     let changed = with(|s| {
@@ -221,11 +176,11 @@ fn sync_settings(ui: &mut Ui, s: &mut Settings, was_on: bool) {
         }
     });
     ui.horizontal(|ui| {
-        let running = RUNNING.load(Ordering::Acquire);
+        let running = craft_sync::background::running();
         if ui.add_enabled(was_on && !running, egui::Button::new("Sync now")).clicked() {
             sync_now();
         }
-        let status = if running { "Syncing…".to_string() } else { with(|st| st.report.clone()).unwrap_or_default() };
+        let status = if running { "Syncing…".to_string() } else { craft_sync::background::report().unwrap_or_default() };
         ui.label(RichText::new(status).color(dim));
         if running {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));

@@ -238,6 +238,11 @@ impl super::Assistant {
         if let Ok(mut s) = self.shelf.lock() {
             s.on = on;
         }
+        // The conversations go to the cloud folder too when syncing is on (in any Craft app):
+        // a thread of its own mirrors this folder every few minutes.
+        if let Some(s) = &store {
+            craft_sync::background::start(s.dir().to_path_buf());
+        }
         self.memory = store;
         if self.messages.is_empty() && !self.busy() {
             self.doc = None;

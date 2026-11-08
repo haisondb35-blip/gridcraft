@@ -145,8 +145,8 @@ impl SheetApp {
         // Files read asynchronously (web file picker, dropped files).
         self.poll_async_opens();
         self.autosave(ctx);
-        // The cloud folder: the shared AI folder every few minutes, the open workbook's cloud copies.
-        crate::sync_ui::tick(self, ctx);
+        // The cloud folder: the open workbook's cloud copies, a version opened from File › Options.
+        crate::sync_ui::tick(self);
         self.update_title(ctx);
         self.request_hidden_paint(ctx);
         // One window always shows a workbook, unless each workbook has a native window of its own
