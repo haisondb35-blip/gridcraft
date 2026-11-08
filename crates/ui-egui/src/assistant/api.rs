@@ -154,9 +154,10 @@ pub struct Reply {
 
 /// Reads a chat API answer.
 pub fn parse_reply(v: &Value) -> Result<Reply, String> {
-    let message = v.pointer("/choices/0/message").filter(|m| m.is_object()).cloned().ok_or_else(|| {
-        v.pointer("/error/message").and_then(Value::as_str).map_or_else(|| "the model sent no message".to_string(), str::to_string)
-    })?;
+    let message =
+        v.pointer("/choices/0/message").filter(|m| m.is_object()).cloned().ok_or_else(|| {
+            v.pointer("/error/message").and_then(Value::as_str).map_or_else(|| "the model sent no message".to_string(), str::to_string)
+        })?;
     let text = message.get("content").and_then(Value::as_str).unwrap_or_default().trim().to_string();
     let calls = message
         .get("tool_calls")

@@ -49,9 +49,8 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
-    let state = STATE.get_or_init(|| {
-        Mutex::new(State { settings: Settings::load(), last_run: None, report: None, checked: None, folder_text: None, open: None })
-    });
+    let state = STATE
+        .get_or_init(|| Mutex::new(State { settings: Settings::load(), last_run: None, report: None, checked: None, folder_text: None, open: None }));
     f(&mut state.lock().unwrap_or_else(PoisonError::into_inner))
 }
 
