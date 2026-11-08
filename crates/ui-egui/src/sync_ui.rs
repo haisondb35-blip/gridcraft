@@ -107,7 +107,7 @@ pub(crate) fn tick(app: &mut SheetApp, ctx: &egui::Context) {
         if due {
             s.last_run = Some(now);
         }
-        (due, s.settings.enabled.then(|| if due { EVERY_MS } else { next - now }))
+        (due, s.settings.enabled.then_some(if due { EVERY_MS } else { next - now }))
     });
     if due {
         sync_now();
