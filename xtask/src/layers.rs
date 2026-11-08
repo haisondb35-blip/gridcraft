@@ -30,6 +30,9 @@ pub const TABLE: &[(&str, Class)] = &[
     ("metafile", Class::Layer(0)),
     // The system clipboard shared by every Craft app: a leaf, used only by the app.
     ("craft-clipboard", Class::Layer(0)),
+    // The synced cloud folder shared by every Craft app (settings, AI memory, earlier versions):
+    // a leaf, used by the UI.
+    ("craft-sync", Class::Layer(0)),
     ("core", Class::Layer(0)),
     ("numfmt", Class::Layer(0)),
     ("pdf", Class::Layer(0)),

@@ -140,6 +140,17 @@ fn normal(path: &str) -> String {
     if cfg!(windows) { p.replace('/', "\\").to_lowercase() } else { p }
 }
 
+/// The names a file's memory is kept under, the one it is saved under first: for a file in a
+/// cloud folder (iCloud Drive and the others) its name there, the same on every computer that
+/// syncs the folder, so the conversation follows the file; then its path on this computer.
+fn keys(path: &str) -> Vec<String> {
+    let local = normal(path);
+    match craft_sync::cloud::portable_key(&local) {
+        Some(cloud) => vec![cloud, local],
+        None => vec![local],
+    }
+}
+
 impl Store {
     pub fn new(dir: impl Into<PathBuf>) -> Store {
         Store { dir: dir.into() }
@@ -168,35 +179,48 @@ impl Store {
         self.dir.join("work")
     }
 
-    fn file(&self, path: &str) -> PathBuf {
-        self.dir.join("memory").join(format!("{:016x}.json", fnv(&normal(path))))
+    fn file(&self, key: &str) -> PathBuf {
+        self.dir.join("memory").join(format!("{:016x}.json", fnv(key)))
     }
 
     /// The memory of the document at `path` (empty when there is none).
     pub fn load(&self, path: &str) -> Memory {
-        let Ok(b) = std::fs::read(self.file(path)) else { return Memory::default() };
-        let Ok(v) = serde_json::from_slice::<Value>(&b) else { return Memory::default() };
-        // A hash shared by two paths (vanishingly rare) is not the other file's memory.
-        if v.get("path").and_then(Value::as_str).is_some_and(|p| p != normal(path)) {
-            return Memory::default();
+        for key in keys(path) {
+            let Ok(b) = std::fs::read(self.file(&key)) else { continue };
+            let Ok(v) = serde_json::from_slice::<Value>(&b) else { continue };
+            // A hash shared by two paths (vanishingly rare) is not the other file's memory.
+            if v.get("path").and_then(Value::as_str).is_some_and(|p| p != key) {
+                continue;
+            }
+            return Memory::from_json(&v);
         }
-        Memory::from_json(&v)
+        Memory::default()
     }
 
     /// Remembers `m` for `path`; an empty memory forgets it.
     pub fn save(&self, path: &str, m: &Memory) {
-        let f = self.file(path);
+        let keys = keys(path);
+        let Some(key) = keys.first() else { return };
+        // Kept under the first name only: once it is written there, a record under the path on
+        // this computer (from before the file's cloud name was used) goes.
+        let forget_old = || {
+            for old in keys.iter().skip(1) {
+                let _ = std::fs::remove_file(self.file(old));
+            }
+        };
+        let f = self.file(key);
         if m.is_empty() {
             let _ = std::fs::remove_file(&f);
+            forget_old();
             return;
         }
         let mut v = m.to_json(false);
-        v["path"] = json!(normal(path));
+        v["path"] = json!(key);
         if f.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok()) {
             // Written beside and renamed, so a crash never leaves half a record.
             let tmp = f.with_extension("json.tmp");
-            if std::fs::write(&tmp, v.to_string()).is_ok() {
-                let _ = std::fs::rename(&tmp, &f);
+            if std::fs::write(&tmp, v.to_string()).is_ok() && std::fs::rename(&tmp, &f).is_ok() {
+                forget_old();
             }
         }
     }

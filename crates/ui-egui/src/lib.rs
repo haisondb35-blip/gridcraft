@@ -55,6 +55,7 @@ pub mod pivot_pane;
 pub mod printing;
 pub mod ribbon;
 pub mod selection_glide;
+pub mod sync_ui;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;

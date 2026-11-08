@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
+pub mod api;
 pub mod embed;
 mod memory;
 pub use memory::{Memory, Store};
@@ -45,6 +46,8 @@ pub struct Launch {
     pub provider: Provider,
     /// The MCP server the configuration file names (Codex takes it on its command line).
     pub server: McpServer,
+    /// Address, model and key, for an assistant reached over HTTP ([`Provider::is_api`]).
+    pub api: Option<api::Config>,
 }
 
 /// Which assistant answers in the pane: Claude Code, or ChatGPT through OpenAI's Codex CLI. Both
@@ -54,15 +57,29 @@ pub enum Provider {
     #[default]
     Claude,
     Codex,
+    /// Models running on this computer (Ollama): nothing leaves it.
+    Ollama,
+    /// Any OpenAI-compatible API (OpenAI, OpenRouter, LM Studio…) with the person's own key.
+    OpenAi,
+    /// Google's Gemini with the person's own key.
+    Gemini,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 2] = [Provider::Claude, Provider::Codex];
+    pub const ALL: [Provider; 5] = [Provider::Claude, Provider::Codex, Provider::Ollama, Provider::OpenAi, Provider::Gemini];
+
+    /// Reached over HTTP by the pane itself ([`api`]): no program to install or sign in to.
+    pub fn is_api(self) -> bool {
+        matches!(self, Provider::Ollama | Provider::OpenAi | Provider::Gemini)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
             Provider::Claude => "Claude",
             Provider::Codex => "ChatGPT (Codex)",
+            Provider::Ollama => "Ollama (this computer)",
+            Provider::OpenAi => "OpenAI-compatible (your key)",
+            Provider::Gemini => "Gemini (your key)",
         }
     }
 
@@ -71,6 +88,9 @@ impl Provider {
         match self {
             Provider::Claude => "claude",
             Provider::Codex => "codex",
+            Provider::Ollama => "ollama",
+            Provider::OpenAi => "openai",
+            Provider::Gemini => "gemini",
         }
     }
 
@@ -83,6 +103,7 @@ impl Provider {
         match self {
             Provider::Claude => find_claude(),
             Provider::Codex => find_codex(),
+            Provider::Ollama | Provider::OpenAi | Provider::Gemini => None,
         }
     }
 
@@ -91,6 +112,7 @@ impl Provider {
         match self {
             Provider::Claude => &["auth", "login"],
             Provider::Codex => &["login"],
+            Provider::Ollama | Provider::OpenAi | Provider::Gemini => &[],
         }
     }
 
@@ -99,6 +121,9 @@ impl Provider {
         match self {
             Provider::Claude => "https://claude.com/claude-code",
             Provider::Codex => "https://developers.openai.com/codex/cli",
+            Provider::Ollama => "https://ollama.com/download",
+            Provider::OpenAi => "https://platform.openai.com/api-keys",
+            Provider::Gemini => "https://aistudio.google.com/apikey",
         }
     }
 
@@ -109,6 +134,7 @@ impl Provider {
         match self {
             Provider::Claude => Some("irm https://claude.ai/install.ps1 | iex"),
             Provider::Codex => find_in(&["npm.cmd", "npm.exe", "npm"]).map(|_| "npm install -g @openai/codex"),
+            Provider::Ollama | Provider::OpenAi | Provider::Gemini => None,
         }
     }
 
@@ -117,6 +143,9 @@ impl Provider {
         match self {
             Provider::Claude => "Claude Code isn't installed: install it from https://claude.com/claude-code, then sign in",
             Provider::Codex => "Codex isn't installed: install OpenAI's Codex CLI (https://developers.openai.com/codex), then sign in with ChatGPT",
+            Provider::Ollama => "Ollama isn't running: install it from https://ollama.com, then get a model that can use tools (ollama pull qwen3)",
+            Provider::OpenAi => "Add your API key in Settings (or another OpenAI-compatible server's address and key)",
+            Provider::Gemini => "Add your Gemini API key in Settings (https://aistudio.google.com/apikey)",
         }
     }
 }
@@ -235,6 +264,10 @@ pub struct Assistant {
     /// Whether that assistant is installed and signed in.
     pub login: Login,
     login_rx: Option<Receiver<Login>>,
+    /// Address, model and key of the assistant reached over HTTP that answers, if one does.
+    pub api: api::Config,
+    /// Its settings are open above the conversation.
+    pub api_open: bool,
 }
 
 impl Default for Assistant {
@@ -262,6 +295,8 @@ impl Default for Assistant {
             provider: Provider::default(),
             login: Login::default(),
             login_rx: None,
+            api: api::Config::default(),
+            api_open: false,
         }
     }
 }
@@ -377,7 +412,15 @@ impl Assistant {
         self.answered = false;
         self.push(Role::User, prompt.clone());
         let launched = self.prepare(ctx).and_then(|(work_dir, mcp_config, server)| {
-            (self.launcher)(Launch { prompt: asked, session: self.session.clone(), mcp_config, work_dir, provider: self.provider, server })
+            (self.launcher)(Launch {
+                prompt: asked,
+                session: self.session.clone(),
+                mcp_config,
+                work_dir,
+                provider: self.provider,
+                server,
+                api: self.api_config(),
+            })
         });
         match launched {
             Ok(r) => self.running = Some(r),
@@ -396,19 +439,41 @@ impl Assistant {
         self.stop();
         self.session = None;
         self.provider = provider;
+        self.load_api();
         self.remember();
         self.login = Login::Unchecked;
         self.check_login();
+    }
+
+    /// The HTTP assistant's settings for the chosen provider, as saved (or its defaults).
+    pub fn load_api(&mut self) {
+        self.api = api::load(self.memory.as_ref().map(Store::dir), self.provider);
+        self.api_open = false;
+    }
+
+    /// Keep the HTTP assistant's settings (on this computer only) and check it again.
+    pub fn save_api(&mut self) -> Result<(), String> {
+        let saved = match &self.memory {
+            Some(store) => api::save(store.dir(), self.provider, &self.api),
+            None => Ok(()),
+        };
+        self.check_login();
+        saved
+    }
+
+    fn api_config(&self) -> Option<api::Config> {
+        self.provider.is_api().then(|| self.api.clone())
     }
 
     /// Look, in the background, at whether the assistant is installed and signed in.
     pub fn check_login(&mut self) {
         let (tx, rx) = channel();
         let provider = self.provider;
+        let cfg = self.api.clone();
         self.login = Login::Checking;
         self.login_rx = Some(rx);
         std::thread::spawn(move || {
-            let _ = tx.send(login_status(provider));
+            let _ = tx.send(login_status(provider, &cfg));
         });
     }
 
@@ -468,11 +533,12 @@ impl Assistant {
                 .map_err(|e| format!("couldn't open the install window: {e}"))?;
             let (tx, rx) = channel();
             let provider = self.provider;
+            let cfg = self.api.clone();
             self.login = Login::Checking;
             self.login_rx = Some(rx);
             std::thread::spawn(move || {
                 let _ = child.wait();
-                let _ = tx.send(login_status(provider));
+                let _ = tx.send(login_status(provider, &cfg));
             });
             Ok(())
         }
@@ -563,7 +629,7 @@ impl Assistant {
     fn relaunch(&mut self, ctx: &egui::Context, prompt: String) {
         self.answered = false;
         let launched = self.prepare(ctx).and_then(|(work_dir, mcp_config, server)| {
-            (self.launcher)(Launch { prompt, session: None, mcp_config, work_dir, provider: self.provider, server })
+            (self.launcher)(Launch { prompt, session: None, mcp_config, work_dir, provider: self.provider, server, api: self.api_config() })
         });
         match launched {
             Ok(r) => self.running = Some(r),
@@ -779,12 +845,19 @@ pub fn parse_codex_status(output: &str) -> Login {
 }
 
 /// Run the assistant's own status command (no window, no browser).
-fn login_status(provider: Provider) -> Login {
+fn login_status(provider: Provider, cfg: &api::Config) -> Login {
+    if provider.is_api() {
+        #[cfg(not(target_arch = "wasm32"))]
+        return api::status(provider, cfg);
+        #[cfg(target_arch = "wasm32")]
+        return Login::Missing;
+    }
+    let _ = cfg;
     let Some(exe) = provider.find() else { return Login::Missing };
     let mut cmd = std::process::Command::new(&exe);
     match provider {
         Provider::Claude => cmd.args(["auth", "status", "--json"]),
-        Provider::Codex => cmd.args(["login", "status"]),
+        Provider::Codex | Provider::Ollama | Provider::OpenAi | Provider::Gemini => cmd.args(["login", "status"]),
     };
     cmd.stdin(std::process::Stdio::null());
     #[cfg(windows)]
@@ -797,7 +870,7 @@ fn login_status(provider: Provider) -> Login {
             let text = format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
             match provider {
                 Provider::Claude => parse_claude_status(&String::from_utf8_lossy(&out.stdout)),
-                Provider::Codex => parse_codex_status(&text),
+                Provider::Codex | Provider::Ollama | Provider::OpenAi | Provider::Gemini => parse_codex_status(&text),
             }
         }
         Err(e) => Login::Unknown(e.to_string()),
@@ -1109,9 +1182,18 @@ type Parser = fn(&str) -> Vec<Event>;
 
 /// Run the chosen assistant for a question.
 fn launch(l: Launch) -> Result<Running, String> {
+    if l.provider.is_api() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let cfg = l.api.clone().unwrap_or_default();
+            return api::launch(l, cfg);
+        }
+        #[cfg(target_arch = "wasm32")]
+        return Err(format!("{} works in the desktop app", l.provider.label()));
+    }
     let exe = l.provider.find().ok_or(l.provider.install_hint())?;
     let (args, prompt, parse): (Vec<String>, String, Parser) = match l.provider {
-        Provider::Claude => (claude_args(&l), l.prompt.clone(), parse_line),
+        Provider::Claude | Provider::Ollama | Provider::OpenAi | Provider::Gemini => (claude_args(&l), l.prompt.clone(), parse_line),
         Provider::Codex => {
             // Codex has no separate system prompt: the first question carries the instructions.
             let prompt = if l.session.is_none() { format!("{}\n\n{}", codex_instructions(), l.prompt) } else { l.prompt.clone() };
@@ -1206,6 +1288,53 @@ fn read_events(
     }
 }
 
+/// The settings of an assistant reached over HTTP: address, model, key (kept on this computer).
+fn api_settings(a: &mut Assistant, ui: &mut egui::Ui) {
+    let dim = crate::theme::Tokens::get(ui.ctx()).text_dim;
+    let mut save = false;
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        egui::Grid::new("assistant_api").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+            ui.label("Address");
+            ui.add(egui::TextEdit::singleline(&mut a.api.url).desired_width(220.0));
+            ui.end_row();
+            ui.label("Model");
+            let hint = if a.provider == Provider::Ollama { "the first one installed" } else { "" };
+            ui.add(egui::TextEdit::singleline(&mut a.api.model).hint_text(hint).desired_width(220.0));
+            ui.end_row();
+            if a.provider != Provider::Ollama {
+                ui.label("API key");
+                ui.add(egui::TextEdit::singleline(&mut a.api.key).password(true).desired_width(220.0));
+                ui.end_row();
+            }
+        });
+        let note = if a.provider == Provider::Ollama {
+            "Ollama runs the model on this computer: nothing you ask leaves it. Pick a model that can use tools (qwen3, llama3.1, mistral…)."
+        } else {
+            "Kept on this computer only: never synced and never saved in a file."
+        };
+        ui.label(egui::RichText::new(note).small().color(dim));
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                save = true;
+            }
+            if ui.button("Cancel").clicked() {
+                a.load_api();
+            }
+            let page = a.provider.download_page();
+            let get = if a.provider == Provider::Ollama { "Get Ollama" } else { "Get a key" };
+            if ui.small_button(get).on_hover_text(page).clicked() {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(page));
+            }
+        });
+    });
+    if save {
+        match a.save_api() {
+            Ok(()) => a.api_open = false,
+            Err(e) => a.messages.push(Msg { role: Role::Error, text: format!("Couldn't save the settings: {e}") }),
+        }
+    }
+}
+
 /// The pane's contents (inside the task pane frame).
 pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get(ui.ctx());
@@ -1222,6 +1351,9 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
         let saved = ui.ctx().data_mut(|d| d.get_persisted::<String>(egui::Id::unique("assistant_provider")));
         if let Some(p) = saved.as_deref().and_then(Provider::from_key) {
             a.provider = p;
+        }
+        if a.api.url.is_empty() {
+            a.load_api();
         }
         a.check_login();
     }
@@ -1256,11 +1388,19 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
         if !tip.is_empty() {
             label.on_hover_text(tip);
         }
-        if sign_in
+        if sign_in && a.provider.is_api() {
+            // Nothing to sign in to: the key goes in Settings.
+            if a.provider != Provider::Ollama && ui.small_button("Add key").clicked() {
+                a.api_open = true;
+            }
+        } else if sign_in
             && ui.small_button("Sign in").clicked()
             && let Err(e) = a.sign_in()
         {
             a.messages.push(Msg { role: Role::Error, text: e });
+        }
+        if a.provider.is_api() && ui.small_button("Settings").on_hover_text("Address, model and key").clicked() {
+            a.api_open = !a.api_open;
         }
         if matches!(a.login, Login::Missing)
             && ui.small_button("Install").on_hover_text(a.provider.install_hint()).clicked()
@@ -1272,6 +1412,9 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
             a.check_login();
         }
     });
+    if a.provider.is_api() && a.api_open {
+        api_settings(a, ui);
+    }
     ui.add_space(4.0);
     let input_h = 96.0;
     let list_h = (ui.available_height() - input_h).max(80.0);
@@ -1375,6 +1518,7 @@ mod tests {
             work_dir: PathBuf::from("."),
             provider: Provider::Claude,
             server: McpServer::default(),
+            api: None,
         };
         let a = claude_args(&l);
         let has = |pair: [&str; 2]| a.windows(2).any(|w| w[0] == pair[0] && w[1] == pair[1]);
@@ -1472,6 +1616,7 @@ mod tests {
             work_dir: PathBuf::from("."),
             provider: Provider::Codex,
             server,
+            api: None,
         };
         let a = codex_args(&l);
         assert_eq!(&a[..5], ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"]);

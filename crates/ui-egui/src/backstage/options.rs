@@ -205,6 +205,8 @@ fn options_save(app: &mut SheetApp, ui: &mut Ui) {
     if ui.checkbox(&mut autosave, lang.tr("Save .xlsx workbooks automatically after every change")).changed() {
         app.toggle_autosave();
     }
+    // iCloud Drive (or another cloud folder) and earlier versions.
+    crate::sync_ui::options(app, ui);
 }
 
 fn options_language(app: &mut SheetApp, ui: &mut Ui) {
