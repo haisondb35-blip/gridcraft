@@ -247,6 +247,14 @@ pub struct GridState {
     pub shape_drag: Option<Pos2>,
     /// An object just inserted, to scroll into view (a new chart placed below the others).
     pub reveal_object: Option<u32>,
+    /// The active sheet's line positions and outlines, kept with a weak reference to the sheet
+    /// they were built from: while it still upgrades to the very sheet shown, the sheet hasn't
+    /// changed (every change goes through `Arc::make_mut`, which moves or copies a sheet that
+    /// has a weak reference to it), so they still hold.
+    pub(crate) lines: Option<(std::sync::Weak<Sheet>, geo::SheetLines)>,
+    /// The conditional formatting statistics (minimum, maximum, percentiles, duplicates) of the
+    /// active sheet's rules, kept the same way: they are read from that sheet's cells alone.
+    pub(crate) cf: Option<(std::sync::Weak<Sheet>, CfCache)>,
     pub drag: Drag,
     pub ensure_visible: bool,
     /// With `ensure_visible`: scroll to the moving end of the selection instead of the active cell

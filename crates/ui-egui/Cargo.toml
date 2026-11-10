@@ -12,7 +12,7 @@ workspace = true
 zip = { workspace = true }
 # The shared capture slot (`craft_ui::capture`) comes from the one craft-libs revision every
 # craft-libs dependency uses (see the root Cargo.toml).
-craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7" }
+craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "1b34eba41e62138fc2438d2734523b302840b45d" }
 gridcraft-engine = { workspace = true }
 gridcraft-chart = { workspace = true }
 # Composing decomposed Vietnamese for display (egui positions no combining marks).
@@ -29,6 +29,7 @@ image = { workspace = true }
 skrifa = { workspace = true }
 # EMF and WMF pictures (old .xls logos and signatures).
 gridcraft-metafile = { workspace = true }
+unicode-bidi = "=0.3.18"
 web-time = { workspace = true }
 # The synced cloud folder every Craft app shares (crates/craft-sync): iCloud Drive and the others.
 craft-sync = { path = "../craft-sync" }
