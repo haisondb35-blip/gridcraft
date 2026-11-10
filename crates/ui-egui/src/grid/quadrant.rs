@@ -310,6 +310,15 @@ fn should_expand_text(filter_space: f32, overflows: bool, across_end: u32, col: 
     filter_space == 0.0 && (overflows || across_end > col) && !in_merge
 }
 
+/// egui positions no combining marks: decomposed Vietnamese (`e` + U+0302 + U+0301, from macOS,
+/// the web or an input method set to combining Unicode) is drawn composed (`ế`). The stored value
+/// is untouched.
+fn compose_for_display(text: &mut String) {
+    if let std::borrow::Cow::Owned(composed) = gridcraft_pdf::compose_vietnamese(text) {
+        *text = composed;
+    }
+}
+
 /// Paint one worksheet cell using its computed appearance and visible geometry.
 ///
 /// Handles text layout, wrapping, alignment, overflow into neighbouring cells,
@@ -362,12 +371,7 @@ fn paint_cell(q: &QuadrantPaint<'_>, painted: &(CellRef, Rect, Look, Option<CfLo
     if text.is_empty() {
         return;
     }
-    // egui positions no combining marks: decomposed Vietnamese (`e` + U+0302 + U+0301, from
-    // macOS, the web or an input method set to combining Unicode) is drawn composed (`ế`).
-    // The stored value is untouched.
-    if let std::borrow::Cow::Owned(composed) = gridcraft_pdf::compose_vietnamese(&text) {
-        text = composed;
-    }
+    compose_for_display(&mut text);
     let color = ncolor.unwrap_or(lk.text_color);
     let direction = crate::text_direction::cell_direction(st.align.reading_order, &text);
     let halign = match st.align.h {
