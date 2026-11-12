@@ -118,12 +118,17 @@ pub(super) fn draw_objects(pg: &mut Page, wb: &Workbook, si: usize, sh: &Sheet, 
         let (fw, fh) = (w / (uv.1[0] - uv.0[0]).max(0.01), h / (uv.1[1] - uv.0[1]).max(0.01));
         let (mw, mh) = (((fw / 72.0) * 150.0).ceil().clamp(1.0, 4000.0) as u32, ((fh / 72.0) * 150.0).ceil().clamp(1.0, 4000.0) as u32);
         let cropped = im.crop.iter().any(|c| *c != 0.0);
-        let decoded = pics.entry((si, imi)).or_insert_with(|| {
+        let decoded = pics.decoded.entry((si, imi)).or_insert_with(|| {
             let full = decode_image(&im.data, mw, mh)?;
             if cropped { crop_rgba(&full.0, full.1, full.2, uv) } else { Some(full) }
         });
         if let Some((px, pw, ph)) = decoded.as_ref() {
-            pg.image_rgba(Rect::new(x, y, w, h), px, [*pw, *ph]);
+            // Every page the picture touches embeds its own copy: past the budget it is left out.
+            let bytes = px.len();
+            if pics.image_bytes.saturating_add(bytes) <= super::MAX_EMBEDDED_IMAGE_BYTES {
+                pics.image_bytes += bytes;
+                pg.image_rgba(Rect::new(x, y, w, h), px, [*pw, *ph]);
+            }
         }
     }
     for shp in &sh.shapes {
@@ -153,15 +158,20 @@ pub(super) fn draw_objects(pg: &mut Page, wb: &Workbook, si: usize, sh: &Sheet, 
         }
         draw_shape(pg, wb, shp, b, (x, y, w, h));
     }
-    for ch in &sh.charts {
+    for (chi, ch) in sh.charts.iter().enumerate() {
         let r = anchor_rect(sh, &ch.anchor);
         if !visible(r) {
             continue;
         }
         let (x, y, _, _) = place(r);
-        let data = gridcraft_chart::resolve(wb, si, ch);
-        let prims = gridcraft_chart::render(ch, &data, r.2 as f32, r.3 as f32, &PdfMeasure);
-        draw_prims(pg, &prims, Xf { ox: x, oy: y, k: b.k });
+        // As for pictures, each page gets its own copy of the drawing commands.
+        let prims = pics.chart((si, chi), || {
+            let data = gridcraft_chart::resolve(wb, si, ch);
+            gridcraft_chart::render(ch, &data, r.2 as f32, r.3 as f32, &PdfMeasure)
+        });
+        if let Some(prims) = prims {
+            draw_prims(pg, prims, Xf { ox: x, oy: y, k: b.k });
+        }
     }
     pg.restore();
 }
