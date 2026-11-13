@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 pub mod backstage;
 mod border_preview;
 mod cell_pictures;
+mod chartcache;
 pub mod chartview;
 pub mod code_editor;
 pub mod control;
@@ -64,6 +65,7 @@ pub mod theme;
 mod updates_ui;
 pub mod widgets;
 mod window_ui;
+pub mod wordart;
 
 pub use window_ui::WindowUi;
 
@@ -297,6 +299,8 @@ pub struct SheetApp {
     /// The shape picked from Insert › Shapes (or Text Box), waiting to be drawn on the grid: the
     /// pointer drags out its box, a click drops a default-size one, Escape cancels (`grid.rs`).
     pub shape_tool: Option<String>,
+    /// Rendered charts kept between frames ([`chartcache`]).
+    pub(crate) chart_cache: std::sync::Mutex<chartcache::ChartCache>,
     /// The system clipboard's text when GridCraft last copied without publishing to it (a
     /// control-channel or MCP `edit.copy`/`edit.cut`). While the system clipboard still holds this
     /// text, GridCraft's copy is the newer one and Paste uses it.
