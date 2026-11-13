@@ -1044,11 +1044,12 @@ impl PdfDoc {
 
     /// Embedded Unicode faces, one per standard font some page drew such text in, holding every
     /// glyph any page used: their objects, and their `/U<n>` entries in the font dictionary.
-    fn write_unicode_faces(&self, objects: &mut Vec<(u32, Vec<u8>)>, font_dict: &mut String, next: &mut u32) {
+    /// `contents` are the pages' content streams (taken out of the pages before writing).
+    fn write_unicode_faces(&self, contents: &[String], out: &mut Vec<u8>, offsets: &mut Vec<usize>, font_dict: &mut String, next: &mut u32) {
         let mut usage: [Option<embed::Usage>; 12] = Default::default();
-        for p in &self.pages {
+        for (p, content) in self.pages.iter().zip(contents) {
             for (i, all) in usage.iter_mut().enumerate() {
-                if p.content.contains(&format!("/U{} ", i + 1)) {
+                if content.contains(&format!("/U{} ", i + 1)) {
                     let u = all.get_or_insert_with(Default::default);
                     if let Some(page_usage) = p.unicode.get(i) {
                         u.extend(page_usage.iter().map(|(g, c)| (*g, *c)));
@@ -1059,7 +1060,11 @@ impl PdfDoc {
         for (i, u) in usage.iter().enumerate() {
             let (Some(u), Some(face)) = (u, Font::ALL.get(i).and_then(|f| self.faces.get(*f))) else { continue };
             let (objs, id) = embed::write_objects(face, u, next);
-            objects.extend(objs);
+            for (obj_id, body) in objs {
+                begin_obj(out, offsets, obj_id);
+                out.extend_from_slice(&body);
+                out.extend_from_slice(b"\nendobj\n");
+            }
             let _ = write!(font_dict, "/U{} {} 0 R ", i + 1, id);
         }
     }
@@ -1144,7 +1149,7 @@ impl PdfDoc {
                 dict_obj(&mut out, &mut offsets, *id, &format!("<< /Type /Font /Subtype /Type1 /BaseFont /{name}{enc} >>"));
             }
         }
-        self.write_unicode_faces(&mut objects, &mut font_dict, &mut next);
+        self.write_unicode_faces(&contents, &mut out, &mut offsets, &mut font_dict, &mut next);
         // Images already written, by content hash: (page, image, object id). A hash match is
         // confirmed by comparing the pixels before an object is shared.
         let mut written: HashMap<u64, Vec<(usize, usize, u32)>> = HashMap::new();
