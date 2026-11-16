@@ -1018,6 +1018,17 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=bb57d422d0bc842cbde430955825553ab7b976f4#bb57d422d0bc842cbde430955825553ab7b976f4"
 
 [[package]]
+name = "craft-stream-codecs"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=f7e0d7fd5577e102b4634bcbe062e649eb68165f#f7e0d7fd5577e102b4634bcbe062e649eb68165f"
+dependencies = [
+ "fax",
+ "hayro-ccitt",
+ "hayro-jbig2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "craft-sync"
 version = "0.1.0"
 dependencies = [
@@ -2145,7 +2156,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "arboard",
  "chrono",
@@ -2174,7 +2185,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-calc"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2186,7 +2197,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-chart"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-core",
@@ -2197,7 +2208,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-cli"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-engine",
  "gridcraft-mcp",
@@ -2210,7 +2221,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-core"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "chrono",
  "js-sys",
@@ -2221,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-engine"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "craft-csv",
  "gridcraft-calc",
@@ -2240,13 +2251,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "unicode-segmentation",
  "web-time",
  "zip 3.0.0",
 ]
 
 [[package]]
 name = "gridcraft-formula"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-core",
  "serde",
@@ -2255,7 +2267,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-functions"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-core",
  "regex",
@@ -2263,7 +2275,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-math"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "ratex-font",
  "ratex-layout",
@@ -2273,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-mcp"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-engine",
  "log",
@@ -2282,7 +2294,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-metafile"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "image",
  "kurbo",
@@ -2293,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-model"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2306,22 +2318,26 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-numfmt"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-core",
 ]
 
 [[package]]
 name = "gridcraft-pdf"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
+ "craft-stream-codecs",
  "epaint_default_fonts",
+ "harfrust",
+ "sha2 0.11.1",
  "skrifa",
+ "unicode-bidi",
 ]
 
 [[package]]
 name = "gridcraft-sandbox"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "landlock",
  "libc",
@@ -2332,7 +2348,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-ui-egui"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "craft-sync",
  "craft-ui",
@@ -2364,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-web"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "craft-web-api",
  "craft-web-host",
@@ -2383,13 +2399,14 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-xlsx"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "craft-cfb",
  "craft-csv",
  "craft-offcrypto",
  "craft-opc",
  "craft-xls",
+ "craft-xml",
  "gridcraft-core",
  "gridcraft-formula",
  "gridcraft-functions",
@@ -2481,6 +2498,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash 0.2.0",
+]
+
+[[package]]
+name = "hayro-ccitt"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f4d0e94ddd48749f06bbe4e5389fb9799a0c45bcaf00495042076ef05e3241a"
+
+[[package]]
+name = "hayro-jbig2"
+version = "0.3.0"
+source = "git+https://github.com/storytold/craft-libs?rev=f7e0d7fd5577e102b4634bcbe062e649eb68165f#f7e0d7fd5577e102b4634bcbe062e649eb68165f"
+dependencies = [
+ "hayro-ccitt",
 ]
 
 [[package]]
@@ -6880,7 +6911,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.19.4"
+version = "0.19.5"
 dependencies = [
  "gridcraft-engine",
  "serde_json",

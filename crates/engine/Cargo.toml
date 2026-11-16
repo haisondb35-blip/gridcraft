@@ -28,6 +28,7 @@ gridcraft-pdf = { workspace = true }
 gridcraft-metafile = { workspace = true }
 gridcraft-math = { workspace = true }
 image = { workspace = true }
+unicode-segmentation = "=1.13.3"
 
 [dev-dependencies]
 gridcraft-xlsx = { workspace = true, features = ["test-support"] }
