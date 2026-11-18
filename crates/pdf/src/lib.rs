@@ -1125,7 +1125,13 @@ impl PdfDoc {
     /// Embedded Unicode faces, one per standard font some page drew such text in, holding every
     /// glyph any page used: their objects, and their `/U<n>` entries in the font dictionary.
     /// `contents` are the pages' content streams (taken out of the pages before writing).
-    fn write_unicode_faces(&self, contents: &[String], out: &mut Vec<u8>, offsets: &mut Vec<usize>, font_dict: &mut String, next: &mut u32) {
+    fn write_unicode_faces(
+        &self,
+        contents: &[String],
+        out: &mut craft_pdf::classic::Writer,
+        font_dict: &mut String,
+        next: &mut u32,
+    ) -> Result<(), Error> {
         let mut usage: [Option<embed::Usage>; 12] = Default::default();
         for (p, content) in self.pages.iter().zip(contents) {
             for (i, all) in usage.iter_mut().enumerate() {
@@ -1141,12 +1147,14 @@ impl PdfDoc {
             let (Some(u), Some(face)) = (u, Font::ALL.get(i).and_then(|f| self.faces.get(*f))) else { continue };
             let (objs, id) = embed::write_objects(face, u, next);
             for (obj_id, body) in objs {
-                begin_obj(out, offsets, obj_id);
-                out.extend_from_slice(&body);
-                out.extend_from_slice(b"\nendobj\n");
+                match body {
+                    embed::Body::Dict(dict) => out.object(obj_id, &dict)?,
+                    embed::Body::Stream(entries, data) => out.stream(obj_id, &entries, &data)?,
+                }
             }
             let _ = write!(font_dict, "/U{} {} 0 R ", i + 1, id);
         }
+        Ok(())
     }
 
     /// Whether some Arabic text was set in the standard and CID fonts, which have no Arabic glyphs,
@@ -1231,7 +1239,7 @@ impl PdfDoc {
                 out.object(*id, &format!("<< /Type /Font /Subtype /Type1 /BaseFont /{name}{enc} >>"))?;
             }
         }
-        self.write_unicode_faces(&contents, &mut out, &mut offsets, &mut font_dict, &mut next);
+        self.write_unicode_faces(&contents, &mut out, &mut font_dict, &mut next)?;
         // Images already written, by content hash: (page, image, object id). A hash match is
         // confirmed by comparing the pixels before an object is shared.
         let mut written: HashMap<u64, Vec<(usize, usize, u32)>> = HashMap::new();

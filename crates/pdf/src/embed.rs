@@ -305,9 +305,16 @@ fn subset_tag(used: &Usage) -> String {
         .collect()
 }
 
+/// A PDF object of an embedded face: a dictionary, or a stream's extra dictionary entries (the
+/// writer adds `/Length`) and its data.
+pub(crate) enum Body {
+    Dict(String),
+    Stream(String, Vec<u8>),
+}
+
 /// The PDF objects for face `face` used as `usage`: returns `(objects, type0_id)` with ids taken
 /// from `next`.
-pub(crate) fn write_objects(face: &Face, usage: &Usage, next: &mut u32) -> (Vec<(u32, Vec<u8>)>, u32) {
+pub(crate) fn write_objects(face: &Face, usage: &Usage, next: &mut u32) -> (Vec<(u32, Body)>, u32) {
     let type0 = *next;
     let cid = type0 + 1;
     let desc = type0 + 2;
@@ -319,8 +326,9 @@ pub(crate) fn write_objects(face: &Face, usage: &Usage, next: &mut u32) -> (Vec<
     let mut objects = Vec::new();
     objects.push((
         type0,
-        format!("<< /Type /Font /Subtype /Type0 /BaseFont /{base} /Encoding /Identity-H /DescendantFonts [{cid} 0 R] /ToUnicode {tounicode} 0 R >>")
-            .into_bytes(),
+        Body::Dict(format!(
+            "<< /Type /Font /Subtype /Type0 /BaseFont /{base} /Encoding /Identity-H /DescendantFonts [{cid} 0 R] /ToUnicode {tounicode} 0 R >>"
+        )),
     ));
     let mut w = String::new();
     for g in &used {
@@ -328,18 +336,17 @@ pub(crate) fn write_objects(face: &Face, usage: &Usage, next: &mut u32) -> (Vec<
     }
     objects.push((
         cid,
-        format!(
+        Body::Dict(format!(
             "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{base} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {desc} 0 R /DW {} /W [{w}] /CIDToGIDMap /Identity >>",
             face.width_1000(0)
-        )
-        .into_bytes(),
+        )),
     ));
     // Flags: 1 fixed pitch, 4 symbolic (required with Identity-H), 64 italic.
     let flags = 4 | if face.fixed_pitch { 1 } else { 0 } | if face.italic_angle != 0.0 { 64 } else { 0 };
     let [x0, y0, x1, y1] = face.bbox;
     objects.push((
         desc,
-        format!(
+        Body::Dict(format!(
             "<< /Type /FontDescriptor /FontName /{base} /Flags {flags} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV 80 /FontFile2 {file} 0 R >>",
             face.scale(x0),
             face.scale(y0),
@@ -349,19 +356,11 @@ pub(crate) fn write_objects(face: &Face, usage: &Usage, next: &mut u32) -> (Vec<
             face.scale(face.ascent),
             face.scale(face.descent),
             face.scale(face.cap_height),
-        )
-        .into_bytes(),
+        )),
     ));
     let font_file = face.subset(&used).unwrap_or_default();
-    let mut o = format!("<< /Length {} /Length1 {} >>\nstream\n", font_file.len(), font_file.len()).into_bytes();
-    o.extend_from_slice(&font_file);
-    o.extend_from_slice(b"\nendstream");
-    objects.push((file, o));
-    let cmap = to_unicode(usage);
-    let mut o = format!("<< /Length {} >>\nstream\n", cmap.len()).into_bytes();
-    o.extend_from_slice(cmap.as_bytes());
-    o.extend_from_slice(b"endstream");
-    objects.push((tounicode, o));
+    objects.push((file, Body::Stream(format!("/Length1 {}", font_file.len()), font_file)));
+    objects.push((tounicode, Body::Stream(String::new(), to_unicode(usage).into_bytes())));
     (objects, type0)
 }
 

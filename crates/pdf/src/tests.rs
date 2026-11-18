@@ -952,9 +952,7 @@ fn embedded_subset_is_a_valid_truetype_file() {
     let (objs, id) = embed::write_objects(&face, &usage, &mut next);
     assert_eq!(id, 10);
     assert_eq!(next, 15);
-    let file = &objs.iter().find(|(i, _)| *i == 13).unwrap().1;
-    let start = find(file, b"stream\n").unwrap() + 7;
-    let font = &file[start..file.len() - b"\nendstream".len()];
+    let Some((_, embed::Body::Stream(_, font))) = objs.iter().find(|(i, _)| *i == 13) else { panic!("font file stream") };
     // Re-parse the subset: glyph ids are kept, and it is much smaller than the original.
     // (No cmap: the PDF maps codes to glyph ids directly.)
     let sub = embed::Face::parse(font.to_vec(), 0).expect("subset parses");
