@@ -943,6 +943,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-drawingml"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=bb57d422d0bc842cbde430955825553ab7b976f4#bb57d422d0bc842cbde430955825553ab7b976f4"
+dependencies = [
+ "craft-xml",
+ "kurbo",
+ "log",
+ "serde",
+]
+
+[[package]]
 name = "craft-fonts-build"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=aa84415bae3b765fef6b7ef42404f66ad1cff9d9#aa84415bae3b765fef6b7ef42404f66ad1cff9d9"
@@ -1007,6 +1018,11 @@ dependencies = [
  "log",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "craft-pdf"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=ff142b3ad58aa7306676749428f4f2f9b277b5dd#ff142b3ad58aa7306676749428f4f2f9b277b5dd"
 
 [[package]]
 name = "craft-print"
@@ -1142,6 +1158,18 @@ dependencies = [
  "md-5",
  "miniz_oxide 0.9.1",
  "sha1 0.10.7",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "craft-xlsx"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=bb57d422d0bc842cbde430955825553ab7b976f4#bb57d422d0bc842cbde430955825553ab7b976f4"
+dependencies = [
+ "craft-drawingml",
+ "craft-opc",
+ "craft-sheet",
+ "craft-xml",
  "thiserror 2.0.21",
 ]
 
@@ -2166,7 +2194,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "arboard",
  "chrono",
@@ -2195,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-calc"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2207,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-chart"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-core",
@@ -2218,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-cli"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-engine",
  "gridcraft-mcp",
@@ -2231,7 +2259,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-core"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "chrono",
  "js-sys",
@@ -2242,7 +2270,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-engine"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "craft-csv",
  "craft-gridcraft-format",
@@ -2269,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-formula"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-core",
  "serde",
@@ -2278,7 +2306,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-functions"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-core",
  "regex",
@@ -2286,7 +2314,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-math"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "ratex-font",
  "ratex-layout",
@@ -2296,7 +2324,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-mcp"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-engine",
  "log",
@@ -2305,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-metafile"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "image",
  "kurbo",
@@ -2316,7 +2344,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-model"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2329,15 +2357,16 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-numfmt"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-core",
 ]
 
 [[package]]
 name = "gridcraft-pdf"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
+ "craft-pdf",
  "craft-stream-codecs",
  "epaint_default_fonts",
  "harfrust",
@@ -2348,7 +2377,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-sandbox"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "landlock",
  "libc",
@@ -2359,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-ui-egui"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "craft-sync",
  "craft-ui",
@@ -2391,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-web"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "craft-web-api",
  "craft-web-host",
@@ -2410,13 +2439,14 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-xlsx"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "craft-cfb",
  "craft-csv",
  "craft-offcrypto",
  "craft-opc",
  "craft-xls",
+ "craft-xlsx",
  "craft-xml",
  "gridcraft-core",
  "gridcraft-formula",
@@ -6922,7 +6952,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.19.6"
+version = "0.19.7"
 dependencies = [
  "gridcraft-engine",
  "serde_json",
