@@ -153,18 +153,18 @@ pub struct DocProps {
     pub keywords: String,
     pub description: String,
     /// `cp:category` (Excel's File › Info "Categories").
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub category: String,
     /// `cp:lastModifiedBy`: who saved the file last.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub last_modified_by: String,
     /// `dcterms:created`, `dcterms:modified` and `cp:lastPrinted` as stored (W3CDTF, normally
     /// UTC such as `2022-05-27T04:57:00Z`); empty when the file doesn't say.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub created: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub modified: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub last_printed: String,
 }
 
