@@ -918,7 +918,7 @@ fn vietnamese_text_embeds_a_unicode_face() {
     let p = d.add_page(612.0, 792.0);
     p.text(72.0, 72.0, 12.0, Font::Helvetica, [0, 0, 0], "Đơn vị: ư ă");
     p.text(72.0, 90.0, 12.0, Font::Helvetica, [0, 0, 0], "Plain ASCII");
-    let pdf = d.finish();
+    let pdf = d.finish().unwrap();
     let s = String::from_utf8_lossy(&pdf);
     assert!(s.contains("/Subtype /Type0"), "Type0 font written");
     assert!(s.contains("/Encoding /Identity-H"));
@@ -973,7 +973,7 @@ fn decomposed_vietnamese_is_composed_before_encoding() {
     p.text(72.0, 72.0, 12.0, Font::Helvetica, [0, 0, 0], "o\u{031B}");
     let face = embed::Face::parse(ubuntu(), 0).unwrap();
     let g = face.glyphs("ơ")[0].1.unwrap();
-    let pdf = String::from_utf8_lossy(&d.finish()).to_string();
+    let pdf = String::from_utf8_lossy(&d.finish().unwrap()).to_string();
     assert!(pdf.contains(&format!("<{g:04X}> Tj")), "composed glyph shown alone");
     // Widths: a decomposed letter measures like the composed one.
     assert_eq!(text_width(Font::Helvetica, 10.0, "e\u{0302}\u{0301}"), text_width(Font::Helvetica, 10.0, "ế"));
@@ -990,7 +990,7 @@ fn without_a_face_unicode_text_keeps_the_question_mark_fallback() {
     // Characters WinAnsi has stay in the standard font, no embedding.
     let mut d = PdfDoc::new();
     d.add_page(100.0, 100.0).text(10.0, 10.0, 10.0, Font::Courier, [0, 0, 0], "café à ê");
-    let s = String::from_utf8_lossy(&d.finish()).to_string();
+    let s = String::from_utf8_lossy(&d.finish().unwrap()).to_string();
     assert!(!s.contains("Type0"));
 }
 
