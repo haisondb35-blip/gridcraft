@@ -3,12 +3,28 @@ use super::geo::Geo;
 use super::menus::is_checkbox;
 use super::{CellRef, Drag, Sheet, SheetApp, json};
 
-/// Input methods compose over the active cell (see [`keyboard`]).
-fn allow_ime(app: &SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &Geo, sh: &Sheet) {
-    if let Some(active) = app.session.active().map(|d| d.selection.active) {
-        let r = geo.mirror_rect(geo.cell_rect(sh, active));
-        ctx.output_mut(|o| o.ime = Some(egui::output::IMEOutput::new(resp.id, 0, Default::default(), r, r)));
+/// Whether something other than the grid owns the keyboard this frame: an editor, a dialog, a
+/// message, a menu or another focused widget. Kept out of [`keyboard`] to hold its complexity
+/// within the workspace limit.
+fn keyboard_elsewhere(app: &SheetApp, ctx: &egui::Context, resp: &egui::Response) -> bool {
+    // Focus left on an editor that no longer exists goes back to the grid.
+    let stale = [egui::Id::unique("gridcraft.cell_editor"), egui::Id::unique("gridcraft.formula_bar"), crate::text_box::editor_id()];
+    let editing = app.editor.is_some() || app.text_box_editor.is_some();
+    if !editing && ctx.memory(|m| m.focused()).is_some_and(|f| stale.contains(&f)) {
+        resp.request_focus();
     }
+    let other_focus = ctx.memory(|m| m.focused()).is_some_and(|f| f != resp.id && (editing || !stale.contains(&f)));
+    // An open filter menu owns the keyboard even when a click inside it left focus on nothing (#1516).
+    // So do the fill menu (its Esc closes it, not the copy) and the right-drag that opens it (an
+    // arrow key would move the selection the menu fills from), and a macro's question.
+    editing
+        || app.dialog.is_some()
+        || other_focus
+        || app.message.is_some()
+        || app.grid.filter_menu.is_some()
+        || app.grid.fill_menu.is_some()
+        || matches!(app.grid.drag, Drag::Fill { menu: true, .. })
+        || app.macros.question.is_some()
 }
 
 /// A typed character, or an input method's first composition or commit: it starts an edit of the
@@ -27,10 +43,7 @@ fn starts_edit(ev: &egui::Event) -> bool {
 fn begin_typing(app: &mut SheetApp, ctx: &egui::Context, ev: egui::Event, rest: impl Iterator<Item = egui::Event>) {
     match ev {
         egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
-            app.begin_edit(Some(text), false);
-            if let Some(ed) = app.editor.as_mut() {
-                ed.caret = ed.text.chars().count();
-            }
+            seed_editor(app, text);
             forward_to_editor(app, ctx, rest);
         }
         // A composition in progress: the editor shows it and takes the commit.
@@ -43,39 +56,20 @@ fn begin_typing(app: &mut SheetApp, ctx: &egui::Context, ev: egui::Event, rest: 
 
 /// Grid keyboard handling when no text field has focus.
 pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &Geo, sh: &Sheet) {
-    // Focus left on an editor that no longer exists goes back to the grid.
-    let stale = [egui::Id::unique("gridcraft.cell_editor"), egui::Id::unique("gridcraft.formula_bar"), crate::text_box::editor_id()];
-    let editing = app.editor.is_some() || app.text_box_editor.is_some();
-    if !editing && ctx.memory(|m| m.focused()).is_some_and(|f| stale.contains(&f)) {
-        resp.request_focus();
-    }
-    let other_focus = ctx.memory(|m| m.focused()).is_some_and(|f| f != resp.id && (editing || !stale.contains(&f)));
-    // An open filter menu owns the keyboard even when a click inside it left focus on nothing (#1516).
-    // So do the fill menu (its Esc closes it, not the copy) and the right-drag that opens it (an
-    // arrow key would move the selection the menu fills from), and a macro's question.
-    if editing
-        || app.dialog.is_some()
-        || other_focus
-        || app.message.is_some()
-        || app.grid.filter_menu.is_some()
-        || app.grid.fill_menu.is_some()
-        || matches!(app.grid.drag, Drag::Fill { menu: true, .. })
-        || app.macros.question.is_some()
-    {
+    if keyboard_elsewhere(app, ctx, resp) {
         return;
     }
     if ctx.memory(|m| m.focused()).is_none() {
         resp.request_focus();
     }
-    // Input methods (the Windows Vietnamese Telex keyboard, Chinese, Japanese, Korean) compose only
-    // while the window allows IME, which egui does only for a focused text field. Allow it over the
-    // active cell, so the first word typed into a cell composes as well: without it the first key
-    // arrived raw and the input method took over mid-word (Telex `awn` became `aưn`, not `ăn`).
-    allow_ime(app, ctx, resp, geo, sh);
     // The grid owns arrows, Tab and Escape (egui would otherwise move focus between widgets).
     ctx.memory_mut(|m| {
         m.set_focus_lock_filter(resp.id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
     });
+    // Input methods (the Windows Vietnamese Telex keyboard, Chinese, Japanese, Korean) compose only
+    // while the window allows IME: publish it over the active cell (upstream's `request_grid_ime`,
+    // which replaced our `allow_ime`), so the first word typed into a cell composes as well.
+    request_grid_ime(app, ctx, resp, geo, sh);
     let events = grid_events(app, ctx, sh);
     // Ctrl+V over a picture (a screenshot, a browser's Copy Image, another app's picture) or over
     // picture files copied in Explorer: egui sends no Paste event for those.
@@ -108,7 +102,12 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             // insert text at, so a middle click on a cell is deliberately not a paste.
             egui::Event::MiddleClickPaste { .. } => {}
             egui::Event::Text(_) if shortcut_pressed || shortcut_ran => {}
-            ev if !shortcut_pressed && starts_edit(&ev) => {
+            // A space on a checkbox cell toggles it (the `Key::Space` arm below). The same key
+            // press also arrives as text, and typing text starts editing the cell -- so the cell
+            // toggled *and* opened an editor holding a space, which Enter then committed over the
+            // checkbox (#1951).
+            egui::Event::Text(text) if text == " " && is_checkbox(sh, app) => {}
+            ev if !shortcut_pressed && !shortcut_ran && starts_edit(&ev) => {
                 begin_typing(app, ctx, ev, events);
                 return;
             }
@@ -196,7 +195,9 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                     // Ctrl+Shift+letter (⌘⇧letter) runs the macro with that shortcut, unless GridCraft uses it.
                     _ if cmd && shift && !m.alt && crate::macro_ui::run_shortcut(app, key) => {}
                     _ if cmd && !crate::keymap::altgr_text(ctx, m, ctx.os() == egui::os::OperatingSystem::Mac) => {
-                        crate::ribbon::shortcut(app, key, m)
+                        // The same key the English table reads: Ctrl+Shift+, typing `;` is Ctrl+;.
+                        let (key, shift) = crate::keymap::us_key(key, physical_key, shift).unwrap_or((key, shift));
+                        crate::ribbon::shortcut(app, key, egui::Modifiers { shift, ..m });
                     }
                     _ => {}
                 }
@@ -204,6 +205,63 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             _ => {}
         }
     }
+}
+
+/// Open the in-cell editor with typed or committed text and put the caret after it.
+fn seed_editor(app: &mut SheetApp, text: String) {
+    app.begin_edit(Some(text), false);
+    if let Some(ed) = app.editor.as_mut() {
+        ed.caret = ed.text.chars().count();
+    }
+}
+
+/// Ask the OS to route keystrokes through the input method while the grid owns keyboard input.
+///
+/// egui enables IME only for a widget that publishes `PlatformOutput::ime` in that frame. The
+/// in-cell `TextEdit` opens *after* the grid has consumed the first keystroke, so without this
+/// the first key of a CJK composition is delivered as raw `Event::Text` and lands in the cell
+/// (Wubi `xta` writes `x` and the input method only ever sees `ta`). The request must be
+/// published on every focused frame, not in response to a key: winit applies it at the end of
+/// the frame, so a key arriving while IME is still off cannot be recovered.
+///
+/// `PlatformOutput` is rebuilt every frame, so returning early (an editor, a dialog or another
+/// widget taking focus) simply leaves `ime` as `None` and the input method turns off.
+fn request_grid_ime(app: &SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &Geo, sh: &Sheet) {
+    if !ctx.memory(|m| m.owns_ime_events(resp.id)) {
+        return;
+    }
+    let Some(d) = app.session.active() else { return };
+    let active = d.selection.active;
+    let merged = sh.merge_at(active);
+    // `begin_edit` refuses a locked cell on a protected sheet. Publishing an IME request for
+    // one would let the user compose text that is then discarded, so skip it up front, using
+    // the same merged-cell anchor and protection check as `SheetApp::begin_edit`.
+    let anchor = merged.map(|m| m.start).unwrap_or(active);
+    if app.session.locked_cell_message(d.wb.active_sheet(), anchor).is_some() {
+        return;
+    }
+    // `cell_rect`/`range_rect` are logical coordinates, but `IMEOutput` needs screen ones.
+    // On a right-to-left sheet the grid is mirrored, so publishing the logical rect puts the
+    // candidate window on the opposite side. After mirroring, `rect.min` is the screen-side
+    // start of the cell in both layouts, which is where the caret belongs.
+    let rect = match merged {
+        Some(m) => geo.mirror_rect(geo.range_rect(sh, m)),
+        None => geo.mirror_rect(geo.cell_rect(sh, active)),
+    };
+    let cursor_rect = egui::Rect::from_min_size(rect.min, egui::vec2(1.0, rect.height()));
+    // egui 0.37 identifies an IME context by (owner, generation). The generation must change
+    // when this owner gains focus and stay stable for ordinary text and selection updates.
+    let gained_focus = resp.gained_focus();
+    let generation = ctx.data_mut(|data| {
+        let g: &mut u64 = data.get_temp_mut_or_default(egui::Id::unique("gridcraft.grid_ime_generation"));
+        if gained_focus || *g == 0 {
+            *g = g.wrapping_add(1);
+        }
+        *g
+    });
+    ctx.output_mut(|o| {
+        o.ime = Some(egui::output::IMEOutput::new(resp.id, generation, egui::IMEPurpose::Normal, rect, cursor_rect));
+    });
 }
 
 /// This frame's input events, without those the focused form control took.
