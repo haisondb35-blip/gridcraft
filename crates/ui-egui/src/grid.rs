@@ -159,6 +159,12 @@ pub enum Drag {
         frame: crate::picture_crop::Frame,
         crop: [f32; 4],
     },
+    /// Turning a shape about the centre of `rect` (its screen rect as the drag began).
+    Rotate {
+        obj: gridcraft_engine::model::ObjRef,
+        rect: Rect,
+        stepped: bool,
+    },
     /// Dragging a corner of the selected chart's values outline (#4389): `to` is the previewed
     /// block, which the release gives the chart.
     ChartData {

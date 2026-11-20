@@ -1,5 +1,6 @@
 use super::editor::forward_to_editor;
 use super::geo::Geo;
+use super::interact::object_key;
 use super::menus::is_checkbox;
 use super::{CellRef, Drag, Sheet, SheetApp, json};
 
@@ -113,8 +114,9 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             }
             egui::Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
                 use egui::Key;
-                if crate::keymap::dispatch(app, ctx, key, physical_key, m, geo, sh) {
-                    shortcut_ran = true;
+                let nudged = object_key(app, sh, key, m);
+                if nudged || crate::keymap::dispatch(app, ctx, key, physical_key, m, geo, sh) {
+                    shortcut_ran |= !nudged;
                     continue;
                 }
                 let cmd = m.command;
