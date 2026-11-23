@@ -121,13 +121,15 @@ fn ime_commit_opens_editor_with_committed_text() {
     assert_eq!(ed.caret, ed.text.chars().count(), "the caret should sit after the committed text");
 }
 
-/// A preedit is not text yet: it must not open the editor on its own, only the commit does.
+/// A preedit is not text yet: it doesn't seed the editor, only the commit does. brian-local: the
+/// editor opens empty to show the composition in the cell (the Windows Vietnamese Telex keyboard
+/// composes a whole word before it commits).
 #[test]
 fn ime_preedit_does_not_seed_editor() {
     let mut h = fixture();
     h.input_mut().events.push(Event::Ime(ImeEvent::Preedit { text: "zh".into(), active_range_chars: Some(0..2) }));
     h.run_steps(2);
-    assert!(h.state().editor.is_none(), "a preedit must not seed the editor on its own");
+    assert_eq!(editor_text(&h).unwrap_or_default(), "", "a preedit must not seed the editor on its own");
     h.input_mut().events.push(Event::Ime(ImeEvent::Commit("张".into())));
     h.run_steps(2);
     assert_eq!(editor_text(&h).as_deref(), Some("张"), "the commit after a preedit opens the editor");
