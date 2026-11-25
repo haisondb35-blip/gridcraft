@@ -362,7 +362,7 @@ fn move_to_book(s: &mut Session, i: usize, copy: bool, target: Option<usize>, to
             }
             *map.entry(id).or_insert_with(|| table.intern(styles.get(id).clone()))
         };
-        let cells: Vec<(CellRef, gridcraft_model::StyleId)> = sh.cells.iter().map(|(c, x)| (c, x.style)).collect();
+        let cells: Vec<(gridcraft_core::CellRef, gridcraft_model::StyleId)> = sh.cells.iter().map(|(c, x)| (c, x.style)).collect();
         for (c, id) in cells {
             let new = restyle(id, &mut cx.wb.styles);
             if new != id {
