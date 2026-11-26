@@ -1384,7 +1384,7 @@ pub fn pane(app: &mut crate::SheetApp, ui: &mut egui::Ui) {
     }
     ui.horizontal(|ui| {
         let mut chosen = a.provider;
-        craft_ui::ComboBox::from_id_salt("assistant_provider").selected_text(chosen.label()).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt("assistant_provider").selected_text(chosen.label()).show_ui(ui, |ui| {
             for p in Provider::ALL {
                 ui.selectable_value(&mut chosen, p, p.label());
             }

@@ -32,7 +32,7 @@ pub(super) fn move_sheet(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, 
     };
     let label = ui.label(lang.tr("To book:"));
     let mut pick = chosen;
-    craft_ui::ComboBox::from_id_salt("move_sheet_book")
+    egui::ComboBox::from_id_salt("move_sheet_book")
         .width(ui.available_width())
         .selected_text(shown)
         .show_ui(ui, |ui| {

@@ -10,9 +10,15 @@ workspace = true
 
 [dependencies]
 zip = { workspace = true }
-# The shared capture slot (`craft_ui::capture`) comes from the one craft-libs revision every
-# craft-libs dependency uses (see the root Cargo.toml).
-craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "aa84415bae3b765fef6b7ef42404f66ad1cff9d9" }
+# The UI runtime that hosts this egui UI (`src/framework.rs`) and the framework dialogs, from the
+# one craft-libs revision every craft-libs dependency uses (see the root Cargo.toml).
+craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "8fa4db64a9bb943520259ea95331a303ba788f21" }
+craft-behavior = { workspace = true }
+craft-host = { workspace = true }
+craft-keymap = { workspace = true }
+craft-print = { workspace = true }
+craft-theme = { workspace = true }
+craft-window = { workspace = true }
 gridcraft-engine = { workspace = true }
 gridcraft-chart = { workspace = true }
 # Composing decomposed Vietnamese for display (egui positions no combining marks).
@@ -52,7 +58,6 @@ craft-update = { workspace = true }
 ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "_ring", "gzip", "platform-verifier"] }
 # The desktop's preferred language for the first-run interface language.
 sys-locale = { workspace = true }
-craft-window = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Read the browser's preferred language for the first-run web interface language.

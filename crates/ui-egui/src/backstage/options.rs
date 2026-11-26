@@ -76,7 +76,7 @@ fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
             "dark" => "Dark",
             _ => "Light",
         };
-        craft_ui::ComboBox::from_id_salt("backstage_theme")
+        egui::ComboBox::from_id_salt("backstage_theme")
             .width(200.0)
             .selected_text(lang.tr(current))
             .show_ui(ui, |ui| {
@@ -94,7 +94,7 @@ fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
         let label = ui.label(lang.tr("Interface size"));
         let size = app.ui.interface_scale;
         let text = |v: u16| if v == 100 { lang.tr("Auto").to_string() } else { format!("{v}%") };
-        craft_ui::ComboBox::from_id_salt("backstage_interface_size")
+        egui::ComboBox::from_id_salt("backstage_interface_size")
             .width(200.0)
             .selected_text(text(size))
             .show_ui(ui, |ui| {
@@ -129,7 +129,7 @@ fn options_general(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     egui::Grid::new("options_new_workbooks").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
         let label = ui.label(lang.tr("Use this as the default font"));
         let fonts = ["Calibri", "Aptos", "Arial", "Times New Roman", "Cambria", "Tahoma", "Segoe UI", "Verdana"];
-        craft_ui::ComboBox::from_id_salt("options_default_font")
+        egui::ComboBox::from_id_salt("options_default_font")
             .width(200.0)
             .selected_text(&prefs.default_font)
             .show_ui(ui, |ui| {
@@ -214,7 +214,7 @@ fn options_language(app: &mut SheetApp, ui: &mut Ui) {
     section(ui, lang, "Interface language");
     ui.horizontal(|ui| {
         let label = ui.label(lang.tr("Interface language"));
-        craft_ui::ComboBox::from_id_salt("backstage_language")
+        egui::ComboBox::from_id_salt("backstage_language")
             .width(200.0)
             .selected_text(lang.name())
             .show_ui(ui, |ui| {
@@ -247,7 +247,7 @@ fn options_advanced(app: &mut SheetApp, ui: &mut Ui) {
             "none" => "Don't move",
             _ => "Down",
         };
-        craft_ui::ComboBox::from_id_salt("options_enter_direction")
+        egui::ComboBox::from_id_salt("options_enter_direction")
             .width(140.0)
             .selected_text(lang.tr(label(&dir)))
             .show_ui(ui, |ui| {
