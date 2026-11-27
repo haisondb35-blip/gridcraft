@@ -75,7 +75,7 @@ pub fn embed(bytes: &[u8], chat: Option<&Value>) -> Option<Vec<u8>> {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let deflate = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for i in 0..zin.len() {
-        let name = zin.name_for_index(i)?.to_string();
+        let name = zin.name_for_index(i)?.ok()?.to_string();
         if name == PART {
             continue;
         }
