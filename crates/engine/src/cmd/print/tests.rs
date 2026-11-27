@@ -842,6 +842,7 @@ fn picture_copies_across_pages_stay_within_the_image_budget() {
         data: std::sync::Arc::new(png.clone()),
         mime: "image/png".into(),
         alt: String::new(),
+        crop: [0.0; 4],
     });
     // `set_picture` gives C1 the cell value `draw_block` needs to reach the picture at all.
     sh.set_picture(CellRef::new(0, 2), std::sync::Arc::new(CellPicture { data: png, mime: "image/png".into(), alt: String::new() }));
